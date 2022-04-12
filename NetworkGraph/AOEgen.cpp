@@ -30,7 +30,50 @@ int main() {
 
 	init >> "test.dot";
 
+
+	init("功能对象图");
+	NetGraph::Node f0("地形生成");
+
+	NetGraph::Node f1("生成地形数据");
+	NetGraph::Node f2("生成植被分布");
+	NetGraph::Node f3("生成河流数据");
+
+	NetGraph::Node f4("用户提供输入");
+
+	NetGraph::Node f5("生成网格数据");
+	NetGraph::Node f6("生成法线细节");
+
+	NetGraph::Node f7("选择植被类型");
+	NetGraph::Node f8("执行位置撒点");
+
+	NetGraph::Node f9("计算海拔分布");
+
+	NetGraph::Node f10("PCG生成算法");
+
+	f10 >> f5 >> f6; 
+	f10 >> f7 >> f8; 
+	f10 >> f9;
+
+	f4 >> f5 >> f6; 
+	f4 >> f7 >> f8; 
+	f4 >> f9;
+
+	f5 >> f1;
+	f6 >> f1;
+
+	f7 >> f2;
+	f8 >> f2;
+
+	f9 >> f3;
+
+	f1 >> f0;
+	f2 >> f0;
+	f3 >> f0;
+
+	init >> "objects.dot";
+
 	system("dot -Tpng ./test.dot -o ./AOE.png");
+	system("dot -Tpng ./objects.dot -o ./objects.png");
 
 	return 0;
 }
