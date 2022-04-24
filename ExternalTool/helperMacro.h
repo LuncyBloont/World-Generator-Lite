@@ -1,8 +1,14 @@
 #ifndef HELPERMACRO_H
 #define HELPERMACRO_H
 
-#define FOR_TYPE(t) template <typename t>
-#define FOR_2TYPES(t1, t2) template <typename t1, typename t2>
-#define FOR_3TYPES(t1, t2, t3) template <typename t1, typename t2, typename t3>
+#define DEBUG
+
+#ifdef DEBUG
+#define DBPRINT(name, format) printf("[debug] " #name " = " #format " [at '%s' -> '%s(...)': line %d]\n", name, __FILE__, __FUNCTION__, __LINE__)
+#define DBAREA(...) do { __VA_ARGS__ } while (0)
+#else
+#define DBPRINT(name, format) do {} while (0)
+#define DBAREA(...) do {} while (0)
+#endif
 
 #endif // HELPERMACRO_H

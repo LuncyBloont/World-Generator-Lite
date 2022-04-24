@@ -1,0 +1,64 @@
+@startuml
+
+class Core {
+	- HeightMap hills;
+	- Image2D hillDetails;
+	- Image2D[8] surfaceNormalMaps;
+	- Image2D surfaceMask0;
+	- Image2D surfaceMask1;
+	- Plant[] plants;
+	- Tmp tmp; 
+	- DataContext context;
+	- function<Core*, Tmp*, DataContext*>[] genSteps;
+	- UI ui;
+	+ void bindUI();
+	+ void generate();
+}
+
+class DataContext {
+	- DataView[] datas;
+	- bool saved;
+	+ void mangeDatas(...);
+	+ bool isSaved();
+}
+
+class Data {
+	- void* data;
+	- size_t size;
+	+ void mallocData(...);
+}
+
+class DataView {
+	- Data data
+	- string name
+	+ void change(...)
+	+ <type> to<Type>()
+}
+
+class UI {}
+
+class Tmp {
+	... (编译工具自动生成)
+}
+
+class Plant {
+	+ vec3 position;
+	+ vec4 quaternions;
+	+ vec4 scale;
+	+ Obj3D mesh;
+}
+
+class HeightMap {
+	+ uint mapWidth;
+	+ uint mapHeight;
+	+ float[][] data;
+	+ float width;
+	+ float height;
+	+ float length;
+}
+
+class Image2D {}
+
+class Obj3D {}
+
+@enduml

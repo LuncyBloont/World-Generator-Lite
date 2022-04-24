@@ -1,6 +1,7 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include "helperMacro.h"
 #include <QMainWindow>
 #include <QSplitter>
 #include <QWidget>
