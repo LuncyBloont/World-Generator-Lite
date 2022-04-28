@@ -29,13 +29,22 @@ class Data {
 }
 
 class DataView {
-	- Data data
-	- string name
+	- Data data;
+	- string name;
+	- Type type;
 	+ void change(...)
 	+ <type> to<Type>()
 }
 
-class UI {}
+class UI {
+	- DataContext* data;
+	+ Load(Core* core)
+	+ popInfo(...)
+	+ popConfirm(...)
+	+ popPrompt(...)
+	+ popExit(...)
+	+ popOpen(...)
+}
 
 class Tmp {
 	... (编译工具自动生成)
@@ -57,8 +66,22 @@ class HeightMap {
 	+ float length;
 }
 
-class Image2D {}
+class Image2D {
+	...
+}
 
-class Obj3D {}
+class Obj3D {
+	...
+}
+
+DataView ..> Data
+DataView --* DataContext
+HeightMap --o Core
+Image2D --o Core
+Plant --* Core
+Tmp --o Core
+DataContext --o Core
+UI --o Core
+Plant ..> Obj3D
 
 @enduml
