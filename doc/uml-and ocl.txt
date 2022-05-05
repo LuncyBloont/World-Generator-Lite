@@ -18,22 +18,27 @@ class Core {
 class DataContext {
 	- DataView[] datas;
 	- bool saved;
+	- bool renderRebuild;
 	+ void mangeDatas(...);
 	+ bool isSaved();
 }
 
 class Data {
-	- void* data;
 	- size_t size;
+	- void* data;
 	+ void mallocData(...);
 }
 
 class DataView {
+	- List<Data> history;
 	- Data data;
 	- string name;
 	- Type type;
+	- DataContext* context;
 	+ void change(...)
 	+ <type> to<Type>()
+	+ void undo()
+	+ void redo()
 }
 
 class UI {
@@ -83,5 +88,11 @@ Tmp --o Core
 DataContext --o Core
 UI --o Core
 Plant ..> Obj3D
+
+note top of UI: self.data != nullptr
+note bottom of DataContext: { n | n = x.name, x in datas }.size == datas.size
+note right of DataView: void change(...) \n post: self.context.saved = false
+note top of DataView: self in self.context
+
 
 @enduml
