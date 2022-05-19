@@ -8,6 +8,9 @@ World Generator Lit是一个基于PCG的过程化开源地形生成器，属于�
 #### 软件架构
 
 软件架构说明，暂无
+数据管理:
+	Data, DataView, DataContext
+	DataView和DataContext中管理save状态
 
 #### 项目开发活动流程
 
