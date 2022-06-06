@@ -13,12 +13,20 @@ SOURCES += \
     dataview.cpp \
     main.cpp \
     mainwindow.cpp \
+    model.cpp \
+    sceneview.cpp \
     ui.cpp \
     wglcore.cpp
 
 HEADERS += \
     datacontext.h \
     dataview.h \
+    helperMacro.h \
+    mainwindow.h \
+    model.h \
+    sceneview.h \
+    ui.h \
+    wglcore.h \
     glm/glm/common.hpp \
     glm/glm/detail/_features.hpp \
     glm/glm/detail/_fixes.hpp \
@@ -436,11 +444,7 @@ HEADERS += \
     glm/glm/vec2.hpp \
     glm/glm/vec3.hpp \
     glm/glm/vec4.hpp \
-    glm/glm/vector_relational.hpp \
-    helperMacro.h \
-    mainwindow.h \
-    ui.h \
-    wglcore.h
+    glm/glm/vector_relational.hpp
 
 FORMS += \
     mainwindow.ui \
@@ -451,4 +455,5 @@ qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
 
-DISTFILES +=
+RESOURCES += \
+    assets.qrc

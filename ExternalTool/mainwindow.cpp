@@ -36,6 +36,26 @@ MainWindow::MainWindow(QWidget *parent)
 
     ui->views->layout()->replaceWidget(ui->viewsInner, splitter2);
     ui->viewsInner->hide();
+
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.vulkan=true"));
+
+    instance = new QVulkanInstance();
+    instance->setLayers(QByteArrayList() << "VK_LAYER_LUNARG_standard_validation");
+
+    if (!instance->create()) { perror("Failed to create Vulkan instance.\n"); exit(-1); }
+    sceneView = new SceneView(nullptr, nullptr, instance, false);
+    QWidget* cont0 = QWidget::createWindowContainer(sceneView);
+    ui->scenePart->layout()->replaceWidget(ui->sceneView, cont0);
+    ui->sceneView->hide();
+
+    topView = new SceneView(nullptr, nullptr, instance, true);
+    QWidget* cont1 = QWidget::createWindowContainer(topView);
+    ui->dataParent->layout()->replaceWidget(ui->dataView, cont1);
+    ui->dataView->hide();
+
+    on_viewToHillsButton_clicked();
+    on_viewToWaterButton_clicked();
+    on_viewToPlantButton_clicked();
 }
 
 MainWindow::~MainWindow()
@@ -44,8 +64,38 @@ MainWindow::~MainWindow()
 }
 
 
-void MainWindow::on_exitButton_triggered()
+void MainWindow::on_viewToHillsButton_clicked()
 {
+    if (topViewHills) {
+        ui->viewToHillsButton->setText("山脉开");
+        topViewHills = false;
+    } else {
+        ui->viewToHillsButton->setText("山脉关");
+        topViewHills = true;
+    }
+}
 
+
+void MainWindow::on_viewToWaterButton_clicked()
+{
+    if (topViewWater) {
+        ui->viewToWaterButton->setText("水域开");
+        topViewWater = false;
+    } else {
+        ui->viewToWaterButton->setText("水域关");
+        topViewWater = true;
+    }
+}
+
+
+void MainWindow::on_viewToPlantButton_clicked()
+{
+    if (topViewPlants) {
+        ui->viewToPlantButton->setText("植被开");
+        topViewPlants = false;
+    } else {
+        ui->viewToPlantButton->setText("植被关");
+        topViewPlants = true;
+    }
 }
 

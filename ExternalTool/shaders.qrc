@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/assets/shaders">
+        <file>shaders/standard.frag.spv</file>
+        <file>shaders/standard.vert.spv</file>
+    </qresource>
+</RCC>

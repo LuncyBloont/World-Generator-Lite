@@ -11,4 +11,6 @@
 #define DBAREA(...) do {} while (0)
 #endif
 
+#define VK(...) if (__VA_ARGS__ != VK_SUCCESS) { perror("Failed at " #__VA_ARGS__); exit(-1); }
+
 #endif // HELPERMACRO_H

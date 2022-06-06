@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/assets">
+        <file>shaders/standard.frag.spv</file>
+        <file>shaders/standard.vert.spv</file>
+        <file>models/smoothMonkey.obj</file>
+        <file>models/cube.obj</file>
+        <file>models/holeBall.obj</file>
+        <file>models/ivyMonkey.obj</file>
+        <file>textures/test.png</file>
+    </qresource>
+</RCC>
