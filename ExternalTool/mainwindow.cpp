@@ -1,11 +1,16 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(SceneView* mainView, SceneView* topView, QWidget *parent)
     : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
-{
+    , ui(new Ui::MainWindow) {
     ui->setupUi(this);
+
+    connect(ui->viewToHillsButton, &QPushButton::pressed, this, &MainWindow::viewToHillsButton_clicked);
+    connect(ui->viewToPlantButton, &QPushButton::pressed, this, &MainWindow::viewToPlantButton_clicked);
+    connect(ui->viewToWaterButton, &QPushButton::pressed, this, &MainWindow::viewToWaterButton_clicked);
+
+    connect(this, &MainWindow::signal_pushMessage, this, &MainWindow::slot_pushMessage);
 
     QString splitterStyle = "QSplitter:handle { background: #989898; }";
     QString splitterBorderStyle = "QSplitter { border: 2px solid green }";
@@ -37,35 +42,33 @@ MainWindow::MainWindow(QWidget *parent)
     ui->views->layout()->replaceWidget(ui->viewsInner, splitter2);
     ui->viewsInner->hide();
 
-    QLoggingCategory::setFilterRules(QStringLiteral("qt.vulkan=true"));
-
-    instance = new QVulkanInstance();
-    instance->setLayers(QByteArrayList() << "VK_LAYER_LUNARG_standard_validation");
-
-    if (!instance->create()) { perror("Failed to create Vulkan instance.\n"); exit(-1); }
-    sceneView = new SceneView(nullptr, nullptr, instance, false);
-    QWidget* cont0 = QWidget::createWindowContainer(sceneView);
+    QWidget* cont0 = QWidget::createWindowContainer(mainView);
     ui->scenePart->layout()->replaceWidget(ui->sceneView, cont0);
     ui->sceneView->hide();
 
-    topView = new SceneView(nullptr, nullptr, instance, true);
     QWidget* cont1 = QWidget::createWindowContainer(topView);
     ui->dataParent->layout()->replaceWidget(ui->dataView, cont1);
     ui->dataView->hide();
 
-    on_viewToHillsButton_clicked();
-    on_viewToWaterButton_clicked();
-    on_viewToPlantButton_clicked();
+    viewToHillsButton_clicked();
+    viewToWaterButton_clicked();
+    viewToPlantButton_clicked();
 }
 
-MainWindow::~MainWindow()
-{
+MainWindow::~MainWindow() {
     delete ui;
 }
 
+void MainWindow::addWidgetToList(QWidget* w) {
+    ui->properties->addWidget(w);
+}
 
-void MainWindow::on_viewToHillsButton_clicked()
-{
+void MainWindow::pushLog(const std::string& s) {
+    msgbuf = s;
+    emit signal_pushMessage();
+}
+
+void MainWindow::viewToHillsButton_clicked() {
     if (topViewHills) {
         ui->viewToHillsButton->setText("山脉开");
         topViewHills = false;
@@ -76,8 +79,7 @@ void MainWindow::on_viewToHillsButton_clicked()
 }
 
 
-void MainWindow::on_viewToWaterButton_clicked()
-{
+void MainWindow::viewToWaterButton_clicked() {
     if (topViewWater) {
         ui->viewToWaterButton->setText("水域开");
         topViewWater = false;
@@ -88,8 +90,7 @@ void MainWindow::on_viewToWaterButton_clicked()
 }
 
 
-void MainWindow::on_viewToPlantButton_clicked()
-{
+void MainWindow::viewToPlantButton_clicked() {
     if (topViewPlants) {
         ui->viewToPlantButton->setText("植被开");
         topViewPlants = false;
@@ -97,5 +98,9 @@ void MainWindow::on_viewToPlantButton_clicked()
         ui->viewToPlantButton->setText("植被关");
         topViewPlants = true;
     }
+}
+
+void MainWindow::slot_pushMessage() {
+    ui->msgLoger->setText(QString::fromStdString(msgbuf));
 }
 

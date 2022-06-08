@@ -2,34 +2,30 @@
 
 SceneView::SceneView(QVulkanWindow *parent, const DataContext* dataContext,
                      QVulkanInstance* instance, const bool topView)
-    : QVulkanWindow{parent}, dataContext(dataContext), instance(instance), topView(topView)
-{
+    : QVulkanWindow{parent}, dataContext(dataContext), instance(instance), topView(topView) {
     setVulkanInstance(instance);
     setSampleCount(2);
     setCursor(Qt::CrossCursor);
 
 }
 
-QVulkanWindowRenderer* SceneView::createRenderer()
-{
-    return new Render(this);
+QVulkanWindowRenderer* SceneView::createRenderer() {
+    return new Render(this, topView);
 }
 
-Render::Render(QVulkanWindow* w): window(w)
-{
-    Model::loadFromOBJFile(":/assets/models/ivyMonkey.obj", monkey, monkeyIndex, false);
+Render::Render(QVulkanWindow* w, const bool topView): topView(topView), window(w) {
+    Model::loadFromOBJFile(":/assets/models/smoothMonkey.obj", monkey, monkeyIndex, false);
 
 }
 
-void Render::initResources()
-{
+void Render::initResources() {
     devFuncs = window->vulkanInstance()->deviceFunctions(window->device());
     functions = window->vulkanInstance()->functions();
 
     uniformSet = new VkDescriptorSet[window->concurrentFrameCount()];
     const VkPhysicalDeviceLimits *pdevLimits = &window->physicalDeviceProperties()->limits;
     const VkDeviceSize uniAlign = pdevLimits->minUniformBufferOffsetAlignment;
-    uniformSize = (sizeof(UniformTime) / uniAlign + 1) * uniAlign;
+    uniformSize = (sizeof(Uniform) / uniAlign + 1) * uniAlign;
     const VkDeviceSize texAlign = pdevLimits->minTexelBufferOffsetAlignment;
     texturesSize = (MAX_TMP_IMAGE_SIZE / texAlign + 1) * texAlign;
     printf("Allcate %u uniform description set.\n", window->concurrentFrameCount());
@@ -58,24 +54,46 @@ void Render::initResources()
                  uniformData, uniform, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                  uniformMemory, unigormMemoryRequirement, true);
 
-    QImage testImageFile(":/assets/textures/test.png");
+    QImage testImageFile(":/assets/textures/grass.png");
     QImage postImageFile = testImageFile.convertToFormat(QImage::Format_RGBA8888);
     VkExtent2D testISize = { static_cast<uint32_t>(postImageFile.width()), static_cast<uint32_t>(postImageFile.height()) };
-    createImage(testISize, VK_FORMAT_R8G8B8A8_SRGB, testImageData, testImage,
+    uint32_t testMipLevel = glm::floor(glm::log(glm::max(testISize.width, testISize.height)) / glm::log(2) + 0.5f);
+    createImage(testISize, testMipLevel, VK_FORMAT_R8G8B8A8_SRGB, testImageData, testImage,
                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                 testIMemory, testIMemoryRequirement, false);
-    createImageView(testImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_FORMAT_R8G8B8A8_SRGB, testImageView);
-    fillImage(postImageFile.sizeInBytes(), testISize, postImageFile.bits(), testImage, { 0, 0 });
+    createImageView(testImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_FORMAT_R8G8B8A8_SRGB, testMipLevel, testImageView);
+    fillImage(postImageFile.sizeInBytes(), testISize, testMipLevel, postImageFile.bits(), testImage, { 0, 0 });
+    genMipmaps(testImage, testISize, testMipLevel);
 
     loadShader();
     buildPipeline(window->swapChainImageSize().width(), window->swapChainImageSize().height());
 
     pushHill(monkey, monkeyIndex);
 
+    createBuffer(MAX_PLANT_COUNT * InstanceSize, testInstanceData, testInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                 testInstanceMemory, testInstanceMemoryRequirement, true);
+    testInstanceCount = 16;
+    std::vector<Transform> idata;
+    for (uint32_t i = 0; i < testInstanceCount; i++) {
+        Transform t{};
+        t.position = glm::vec3(glm::sphericalRand(3.5f));
+        t.rotation = glm::vec3(glm::linearRand(0.0, 6.28), glm::linearRand(0.0, 6.28), glm::linearRand(0.0, 6.28));
+        t.scale = glm::vec3(0.5f);
+        idata.push_back(t);
+    }
+    memcpy(testInstanceData, idata.data(), idata.size() * InstanceSize);
+
 }
 
-void Render::releaseResources()
-{
+void Render::initSwapChainResources() {
+    QVulkanWindowRenderer::initSwapChainResources();
+}
+
+void Render::releaseSwapChainResources() {
+    QVulkanWindowRenderer::releaseSwapChainResources();
+}
+
+void Render::releaseResources() {
     VkDevice dev = window->device();
     devFuncs->vkFreeMemory(dev, hillMemory, VDFT);
     devFuncs->vkFreeMemory(dev, hillIndexMemory, VDFT);
@@ -92,8 +110,7 @@ void Render::releaseResources()
     devFuncs->vkFreeMemory(dev, uniformMemory, VDFT);
     devFuncs->vkDestroyBuffer(dev, uniform, VDFT);
     devFuncs->vkDestroyDescriptorSetLayout(dev, uniformSetLayout, VDFT);
-    for (int i = 0; i < window->concurrentFrameCount(); i++)
-    {
+    for (int i = 0; i < window->concurrentFrameCount(); i++) {
         devFuncs->vkFreeDescriptorSets(dev, uniformPool, 1, &uniformSet[i]);
     }
     devFuncs->vkDestroyDescriptorPool(dev, uniformPool, VDFT);
@@ -117,6 +134,9 @@ void Render::releaseResources()
     devFuncs->vkFreeMemory(dev, testIMemory, VDFT);
 
     devFuncs->vkDestroySampler(dev, standSampler, VDFT);
+
+    devFuncs->vkFreeMemory(dev, testInstanceMemory, VDFT);
+    devFuncs->vkDestroyBuffer(dev, testInstanceBuffer, VDFT);
 
     /*
 
@@ -180,20 +200,17 @@ void Render::releaseResources()
     */
 }
 
-void Render::logicalDeviceLost()
-{
+void Render::logicalDeviceLost() {
     perror("Device lost!!\n");
     QVulkanWindowRenderer::logicalDeviceLost();
 }
 
-void Render::physicalDeviceLost()
-{
+void Render::physicalDeviceLost() {
     perror("Physical device lost!!\n");
     QVulkanWindowRenderer::physicalDeviceLost();
 }
 
-void Render::startNextFrame()
-{
+void Render::startNextFrame() {
     green += 0.005f;
     if (green > 1.0f)
         green = 0.0f;
@@ -203,7 +220,7 @@ void Render::startNextFrame()
     VkClearValue clearValues[3] = {};
     clearValues[0].color = clearColor;
     clearValues[1].depthStencil = clearDS;
-    glm::vec3 env = glm::vec3(0.3f, 0.5f, 0.6f);
+    glm::vec3 env = glm::vec3(0.25f, 0.4f, 0.65f);
     env = glm::pow(env, glm::vec3(1.0f / 2.2f));
     clearValues[2].color = {{ env.r, env.g, env.b }};
 
@@ -231,25 +248,26 @@ void Render::startNextFrame()
 
     VkRect2D scissor{};
     scissor.offset = { 0, 0 };
-    scissor.extent = VkExtent2D
-    {
+    scissor.extent = VkExtent2D {
         static_cast<uint32_t>(window->swapChainImageSize().width()),
         static_cast<uint32_t>(window->swapChainImageSize().height())
     };
     devFuncs->vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
-    UniformTime unif = {
-        static_cast<float>(clock() / 1000.0f),
-        glm::vec4(static_cast<float>(scissor.extent.width), static_cast<float>(scissor.extent.height), 1.0f, 1.0f)
-    };
-    memcpy(static_cast<uint8_t*>(uniformData) + window->currentFrame() * uniformSize, &unif, sizeof(UniformTime));
+    Uniform unif{};
+    unif.time = static_cast<float>(clock() / 1000.0f);
+    unif.resolution = glm::vec4(static_cast<float>(scissor.extent.width), static_cast<float>(scissor.extent.height), 1.0f, 1.0f);
+    memcpy(static_cast<uint8_t*>(uniformData) + window->currentFrame() * uniformSize, &unif, sizeof(Uniform));
 
     devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneViewPipelineLayout, 0, 1,
                                       &uniformSet[window->currentFrame()], 0, nullptr);
+
     VkDeviceSize offsets[] = { 0 };
     devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &hillVertexBuffer, offsets);
     devFuncs->vkCmdBindIndexBuffer(cmdBuf, hillIndexBuffer, 0, IndexType);
-    devFuncs->vkCmdDrawIndexed(cmdBuf, hillIndexCount, 1, 0, 0, 0);
+    VkDeviceSize instanceOffsets[] = { 0 };
+    devFuncs->vkCmdBindVertexBuffers(cmdBuf, 1, 1, &testInstanceBuffer, instanceOffsets);
+    devFuncs->vkCmdDrawIndexed(cmdBuf, hillIndexCount, testInstanceCount, 0, 0, 0);
 
     devFuncs->vkCmdEndRenderPass(cmdBuf);
 
@@ -257,8 +275,7 @@ void Render::startNextFrame()
     window->requestUpdate(); // render continuously, throttled by the presentation rate
 }
 
-void Render::pushHill(const Vertexs& vs, const Indexs& index)
-{
+void Render::pushHill(const Vertexs& vs, const Indexs& index) {
     fillBuffer(vs.size() * VertexSize, vs.data(), hillVertexBuffer, 0);
     hillVsCount = vs.size();
     fillBuffer(index.size() * IndexSize, index.data(), hillIndexBuffer, 0);
@@ -266,8 +283,7 @@ void Render::pushHill(const Vertexs& vs, const Indexs& index)
 }
 
 void Render::createBuffer(uint32_t size, void*& data, VkBuffer& buffer, VkBufferUsageFlags usage,
-                          VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, bool local)
-{
+                          VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, bool local) {
     VkBufferCreateInfo bufferCreateInfo{};
     bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -282,15 +298,12 @@ void Render::createBuffer(uint32_t size, void*& data, VkBuffer& buffer, VkBuffer
     VkPhysicalDeviceMemoryProperties memoryProperties;
     functions->vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(), &memoryProperties);
     memoryAllocateInfo.memoryTypeIndex = 1;
-    for (size_t i = 0; i < memoryProperties.memoryTypeCount; i++)
-    {
+    for (size_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
         VkMemoryPropertyFlags flags = local ?
                     (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) :
                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-        if (memoryProperties.memoryTypes[i].propertyFlags & flags)
-        {
-            if (memoryRequirement.memoryTypeBits & (1 << i))
-            {
+        if (memoryProperties.memoryTypes[i].propertyFlags & flags) {
+            if (memoryRequirement.memoryTypeBits & (1 << i)) {
                 memoryAllocateInfo.memoryTypeIndex = i; break;
             }
         }
@@ -302,9 +315,8 @@ void Render::createBuffer(uint32_t size, void*& data, VkBuffer& buffer, VkBuffer
     if (local) { VK(devFuncs->vkMapMemory(window->device(), memory, 0, memoryRequirement.size, 0, &data)); }
 }
 
-void Render::createImage(VkExtent2D extent, VkFormat format, void*& data, VkImage& image, VkImageUsageFlags usage,
-                         VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, bool local)
-{
+void Render::createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, void*& data, VkImage& image, VkImageUsageFlags usage,
+                         VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, bool local) {
     VkImageCreateInfo imageCreateInfo{};
     imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -314,7 +326,7 @@ void Render::createImage(VkExtent2D extent, VkFormat format, void*& data, VkImag
     imageCreateInfo.arrayLayers = 1;
     imageCreateInfo.format = format;
     imageCreateInfo.initialLayout = local ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
-    imageCreateInfo.mipLevels = 1;
+    imageCreateInfo.mipLevels = mipsLevel;
     imageCreateInfo.tiling = local ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
     imageCreateInfo.usage = usage;
     imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -327,15 +339,12 @@ void Render::createImage(VkExtent2D extent, VkFormat format, void*& data, VkImag
     memoryAllocateInfo.memoryTypeIndex = 1;
     VkPhysicalDeviceMemoryProperties memoryProperties;
     functions->vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(), &memoryProperties);
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
-    {
+    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
         VkMemoryPropertyFlags flag = local ?
                     (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) :
                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-        if (memoryProperties.memoryTypes[i].propertyFlags & flag)
-        {
-            if (memoryRequirement.memoryTypeBits & (1 << i))
-            {
+        if (memoryProperties.memoryTypes[i].propertyFlags & flag) {
+            if (memoryRequirement.memoryTypeBits & (1 << i)) {
                 memoryAllocateInfo.memoryTypeIndex = i;
             }
         }
@@ -349,8 +358,7 @@ void Render::createImage(VkExtent2D extent, VkFormat format, void*& data, VkImag
     if (local) { devFuncs->vkMapMemory(window->device(), memory, 0, memoryRequirement.size, 0, &data); }
 }
 
-void Render::fillBuffer(uint32_t size, const void* data, VkBuffer buffer, uint32_t offset)
-{
+void Render::fillBuffer(uint32_t size, const void* data, VkBuffer buffer, uint32_t offset) {
     void* GPUData;
     devFuncs->vkMapMemory(window->device(), tmpBufferMemory, 0, tmpBufferRequirement.size, 0, &GPUData);
     memcpy(GPUData, data, size);
@@ -389,8 +397,7 @@ void Render::fillBuffer(uint32_t size, const void* data, VkBuffer buffer, uint32
     devFuncs->vkFreeCommandBuffers(window->device(), window->graphicsCommandPool(), 1, &cmdBuf);
 }
 
-void Render::fillBufferInit()
-{
+void Render::fillBufferInit() {
     VkBufferCreateInfo tmpBufCreateInfo{};
     tmpBufCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     tmpBufCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -403,12 +410,9 @@ void Render::fillBufferInit()
     tmpAllocateInfo.memoryTypeIndex = 1;
     VkPhysicalDeviceMemoryProperties memoryProperties;
     functions->vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(), &memoryProperties);
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
-    {
-        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
-        {
-            if (tmpBufferRequirement.memoryTypeBits & (1 << i))
-            {
+    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
+        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+            if (tmpBufferRequirement.memoryTypeBits & (1 << i)) {
                 tmpAllocateInfo.memoryTypeIndex = i;
                 break;
             }
@@ -420,8 +424,7 @@ void Render::fillBufferInit()
     VK(devFuncs->vkBindBufferMemory(window->device(), tmpBuffer, tmpBufferMemory, 0));
 }
 
-void Render::fillImage(uint32_t size, VkExtent2D extent, const void* data, VkImage image, VkOffset2D offset)
-{
+void Render::fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, const void* data, VkImage image, VkOffset2D offset) {
     void* GPUData;
     devFuncs->vkMapMemory(window->device(), tmpImageMemory, 0, tmpImageRequirement.size, 0, &GPUData);
     memcpy(GPUData, data, size);
@@ -454,7 +457,7 @@ void Render::fillImage(uint32_t size, VkExtent2D extent, const void* data, VkIma
     makeImageDstBarrier.subresourceRange.baseArrayLayer = 0;
     makeImageDstBarrier.subresourceRange.baseMipLevel = 0;
     makeImageDstBarrier.subresourceRange.layerCount = 1;
-    makeImageDstBarrier.subresourceRange.levelCount = 1;
+    makeImageDstBarrier.subresourceRange.levelCount = mipsLevel;
     devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                    0,
                                    0, nullptr,
@@ -486,7 +489,7 @@ void Render::fillImage(uint32_t size, VkExtent2D extent, const void* data, VkIma
     makeImageShaderUseBarrier.subresourceRange.baseArrayLayer = 0;
     makeImageShaderUseBarrier.subresourceRange.baseMipLevel = 0;
     makeImageShaderUseBarrier.subresourceRange.layerCount = 1;
-    makeImageShaderUseBarrier.subresourceRange.levelCount = 1;
+    makeImageShaderUseBarrier.subresourceRange.levelCount = mipsLevel;
     devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
                                    0,
                                    0, nullptr,
@@ -506,8 +509,7 @@ void Render::fillImage(uint32_t size, VkExtent2D extent, const void* data, VkIma
     devFuncs->vkFreeCommandBuffers(window->device(), window->graphicsCommandPool(), 1, &cmdBuf);
 }
 
-void Render::fillImageInit()
-{
+void Render::fillImageInit() {
     VkBufferCreateInfo tmpCreateInfo{};
     tmpCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     tmpCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -521,12 +523,9 @@ void Render::fillImageInit()
     tmpMemoryAllocateInfo.memoryTypeIndex = 1;
     VkPhysicalDeviceMemoryProperties memoryProperties;
     functions->vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(), &memoryProperties);
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
-    {
-        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
-        {
-            if (tmpImageRequirement.memoryTypeBits & (1 << i))
-            {
+    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
+        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+            if (tmpImageRequirement.memoryTypeBits & (1 << i)) {
                 tmpMemoryAllocateInfo.memoryTypeIndex = i;
                 break;
             }
@@ -538,8 +537,7 @@ void Render::fillImageInit()
     VK(devFuncs->vkBindBufferMemory(window->device(), tmpImage, tmpImageMemory, 0));
 }
 
-void Render::buildPipeline(uint32_t width, uint32_t height)
-{
+void Render::buildPipeline(uint32_t width, uint32_t height) {
     destroyPipeline();
 
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
@@ -584,8 +582,7 @@ void Render::buildPipeline(uint32_t width, uint32_t height)
     poolCreateInfo.maxSets = window->concurrentFrameCount();
     VK(devFuncs->vkCreateDescriptorPool(window->device(), &poolCreateInfo, VDFT, &uniformPool));
 
-    for (int i = 0; i < window->concurrentFrameCount(); i++)
-    {
+    for (int i = 0; i < window->concurrentFrameCount(); i++) {
         VkDescriptorSetAllocateInfo uniformAllocateInfo{};
         uniformAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         uniformAllocateInfo.descriptorPool = uniformPool;
@@ -647,8 +644,7 @@ void Render::buildPipeline(uint32_t width, uint32_t height)
     viewportCreateInfo.viewportCount = 1;
     VkRect2D scissor{};
     scissor.offset = { 0, 0 };
-    scissor.extent = VkExtent2D
-    {
+    scissor.extent = VkExtent2D {
         static_cast<uint32_t>(width),
         static_cast<uint32_t>(height)
     };
@@ -683,16 +679,23 @@ void Render::buildPipeline(uint32_t width, uint32_t height)
     graphicsPipelineCreateInfo.stageCount = 2;
     graphicsPipelineCreateInfo.renderPass = window->defaultRenderPass();
     graphicsPipelineCreateInfo.subpass = 0;
+
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    VkVertexInputAttributeDescription descriptions[Model::VERTEX_INPUT_COUNT];
+    VkVertexInputAttributeDescription descriptions[Model::VERTEX_INPUT_COUNT + Model::INSTANCE_INPUT_COUNT];
     Model::vertexInputAttributeDescription(descriptions);
-    vertexInputInfo.vertexAttributeDescriptionCount = Model::VERTEX_INPUT_COUNT;
+    Model::instanceInputAttributeDescription(descriptions + Model::VERTEX_INPUT_COUNT);
+    vertexInputInfo.vertexAttributeDescriptionCount = Model::VERTEX_INPUT_COUNT + Model::INSTANCE_INPUT_COUNT;
     vertexInputInfo.pVertexAttributeDescriptions = descriptions;
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
+
+    vertexInputInfo.vertexBindingDescriptionCount = 2;
     VkVertexInputBindingDescription inputBindingDescription{};
     Model::vertexInputBindingDescription(inputBindingDescription);
-    vertexInputInfo.pVertexBindingDescriptions = &inputBindingDescription;
+    VkVertexInputBindingDescription inputInstanceBindingDescription{};
+    Model::instanceInputBindingDescription(inputInstanceBindingDescription);
+    VkVertexInputBindingDescription inputBindings[] = { inputBindingDescription, inputInstanceBindingDescription };
+    vertexInputInfo.pVertexBindingDescriptions = inputBindings;
+
     graphicsPipelineCreateInfo.pVertexInputState = &vertexInputInfo;
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyState{};
     inputAssemblyState.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -724,22 +727,18 @@ void Render::buildPipeline(uint32_t width, uint32_t height)
     VK(devFuncs->vkCreateGraphicsPipelines(window->device(), VDFT, 1, &graphicsPipelineCreateInfo, VDFT, &sceneViewPipeline));
 }
 
-void Render::destroyPipeline()
-{
-    if (sceneViewPipeline != VK_NULL_HANDLE)
-    {
+void Render::destroyPipeline() {
+    if (sceneViewPipeline != VK_NULL_HANDLE) {
         devFuncs->vkDestroyPipeline(window->device(), sceneViewPipeline, VDFT);
         sceneViewPipeline = VK_NULL_HANDLE;
     }
-    if (sceneViewPipelineLayout != VK_NULL_HANDLE)
-    {
+    if (sceneViewPipelineLayout != VK_NULL_HANDLE) {
         devFuncs->vkDestroyPipelineLayout(window->device(), sceneViewPipelineLayout, VDFT);
         sceneViewPipelineLayout = VK_NULL_HANDLE;
     }
 }
 
-void Render::loadShader()
-{
+void Render::loadShader() {
     QFile vertFile0(":/assets/shaders/standard.vert.spv");
     vertFile0.open(QFile::ReadOnly);
     VkShaderModuleCreateInfo vertexShaderModuleCreateInfo{};
@@ -759,8 +758,7 @@ void Render::loadShader()
     VK(devFuncs->vkCreateShaderModule(window->device(), &fragmentShaderModuleCreateInfo, VDFT, &standardFragmentShader));
 }
 
-void Render::createBasicRenderPass()
-{
+void Render::createBasicRenderPass() {
     VkRenderPassCreateInfo passCreateInfo{};
     passCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     VkAttachmentDescription attachmentDescription{};
@@ -796,8 +794,7 @@ void Render::createBasicRenderPass()
     VK(devFuncs->vkCreateRenderPass(window->device(), &passCreateInfo, VDFT, &basicPass));
 }
 
-void Render::createSampler()
-{
+void Render::createSampler() {
     VkSamplerCreateInfo createInfo{};
     createInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     createInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -810,7 +807,7 @@ void Render::createSampler()
     createInfo.compareEnable = VK_FALSE;
     createInfo.magFilter = VK_FILTER_LINEAR;
     createInfo.minFilter = VK_FILTER_LINEAR;
-    createInfo.maxLod = 0.0;
+    createInfo.maxLod = 20.0f;
     createInfo.minLod = 0.0;
     createInfo.mipLodBias = 0.0f;
     createInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -819,8 +816,7 @@ void Render::createSampler()
     VK(devFuncs->vkCreateSampler(window->device(), &createInfo, VDFT, &standSampler));
 }
 
-void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, VkImageView& view)
-{
+void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, uint32_t mipsLevel, VkImageView& view) {
     VkImageViewCreateInfo viewInfo{};
     viewInfo.image = image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -830,8 +826,107 @@ void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat 
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.layerCount = 1;
-    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.levelCount = mipsLevel;
     VK(devFuncs->vkCreateImageView(window->device(), &viewInfo, VDFT, &view));
+}
+
+void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel) {
+    VkCommandBuffer cmdBuf;
+    VkCommandBufferAllocateInfo cmdBufAllocateInfo{};
+    cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdBufAllocateInfo.commandBufferCount = 1;
+    cmdBufAllocateInfo.commandPool = window->graphicsCommandPool();
+    cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    VK(devFuncs->vkAllocateCommandBuffers(window->device(), &cmdBufAllocateInfo, &cmdBuf));
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    devFuncs->vkBeginCommandBuffer(cmdBuf, &beginInfo);
+
+    VkImageMemoryBarrier makeImageAllLevelToDst{};
+    makeImageAllLevelToDst.image = image;
+    makeImageAllLevelToDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    makeImageAllLevelToDst.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    makeImageAllLevelToDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    makeImageAllLevelToDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    makeImageAllLevelToDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    makeImageAllLevelToDst.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    makeImageAllLevelToDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    makeImageAllLevelToDst.subresourceRange.baseMipLevel = 0;
+    makeImageAllLevelToDst.subresourceRange.baseArrayLayer = 0;
+    makeImageAllLevelToDst.subresourceRange.levelCount = mipsLevel;
+    makeImageAllLevelToDst.subresourceRange.layerCount = 1;
+    makeImageAllLevelToDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                                   1, &makeImageAllLevelToDst);
+
+    VkOffset2D mipSize = { static_cast<int32_t>(size.width), static_cast<int32_t>(size.height) };
+    for (uint32_t i = 1; i <= mipsLevel; i++) {
+        uint32_t level = i < mipsLevel ? i : mipsLevel - 1;
+        VkImageMemoryBarrier makeImageIndexIm1ToSrc{};
+        makeImageIndexIm1ToSrc.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        makeImageIndexIm1ToSrc.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        makeImageIndexIm1ToSrc.image = image;
+        makeImageIndexIm1ToSrc.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        makeImageIndexIm1ToSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        makeImageIndexIm1ToSrc.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        makeImageIndexIm1ToSrc.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        makeImageIndexIm1ToSrc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        makeImageIndexIm1ToSrc.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        makeImageIndexIm1ToSrc.subresourceRange.baseArrayLayer = 0;
+        makeImageIndexIm1ToSrc.subresourceRange.baseMipLevel = level - 1;
+        makeImageIndexIm1ToSrc.subresourceRange.layerCount = 1;
+        makeImageIndexIm1ToSrc.subresourceRange.levelCount = 1;
+        devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                                       1, &makeImageIndexIm1ToSrc);
+
+        VkImageBlit blit{};
+        blit.srcOffsets[0] = { 0, 0, 0 };
+        blit.srcOffsets[1] = { mipSize.x, mipSize.y, 1 };
+        mipSize = { mipSize.x / 2 > 0 ? mipSize.x / 2 : 1, mipSize.y / 2 > 0 ? mipSize.y / 2 : 1 };
+        blit.dstOffsets[0] = { 0, 0, 0 };
+        blit.dstOffsets[1] = { mipSize.x, mipSize.y, 1 };
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.baseArrayLayer = 0;
+        blit.srcSubresource.layerCount = 1;
+        blit.srcSubresource.mipLevel = level - 1;
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.baseArrayLayer = 0;
+        blit.dstSubresource.layerCount = 1;
+        blit.dstSubresource.mipLevel = level;
+        devFuncs->vkCmdBlitImage(cmdBuf, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                 1, &blit, VK_FILTER_LINEAR);
+
+        VkImageMemoryBarrier makeImageIndexIm1ToShader{};
+        makeImageIndexIm1ToShader.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        makeImageIndexIm1ToShader.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        makeImageIndexIm1ToShader.image = image;
+        makeImageIndexIm1ToShader.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        makeImageIndexIm1ToShader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        makeImageIndexIm1ToShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        makeImageIndexIm1ToShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        makeImageIndexIm1ToShader.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        makeImageIndexIm1ToShader.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        makeImageIndexIm1ToShader.subresourceRange.baseArrayLayer = 0;
+        makeImageIndexIm1ToShader.subresourceRange.baseMipLevel = level - 1;
+        makeImageIndexIm1ToShader.subresourceRange.levelCount = 1;
+        makeImageIndexIm1ToShader.subresourceRange.layerCount = 1;
+        devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+                                       1, &makeImageIndexIm1ToShader);
+    }
+
+    devFuncs->vkEndCommandBuffer(cmdBuf);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    devFuncs->vkQueueSubmit(window->graphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    devFuncs->vkQueueWaitIdle(window->graphicsQueue());
+
+    devFuncs->vkFreeCommandBuffers(window->device(), window->graphicsCommandPool(), 1, &cmdBuf);
 }
 
 

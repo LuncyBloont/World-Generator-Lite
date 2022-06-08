@@ -1,82 +1,136 @@
 #include "dataview.h"
+#include "wglcore.h"
 
-/* DataView::DataView(): name("??"), context(nullptr), dataTime(0)
-{
-    history.clear();
-    now = history.begin();
+DataView::DataView(std::string name, void* val, Type type, WGLCore* core, size_t listener):
+    type(type), name(name), context(nullptr), core(core), listener(listener) {
+    value = new uint8_t[type.size];
+    if (val) { memcpy(value, val, type.size); }
+    else { memset(value, 0, type.size); }
 }
 
-DataView::DataView(std::string name, void* val, uint64_t size): name(name), context(nullptr), dataTime(0)
-{
-    history.clear();
-    now = history.begin();
-    this->size = size;
-    val = new char[size];
-}
-
-DataView::DataView(const DataView& other)
-{
-    copyFrom(other);
-}
-
-DataView& DataView::operator =(const DataView& other)
-{
-    copyFrom(other);
-    return *this;
-}
-
-T DataView::get() const
-{
+const void* DataView::get() const {
     return value;
 }
 
-void DataView::set(const T& val)
-{
-    value = val;
+void DataView::set(const void* val) {
+    memcpy(value, val, type.size);
+    change = true;
+    core->wake(listener);
+    core->unGen = true;
 }
 
-const std::string& DataView::getName() const
-{
+const std::string& DataView::getName() const {
     return name;
 }
 
-void DataView::rename(const std::string name)
-{
-    this->name = name;
+bool DataView::isModified() const {
+    return change;
 }
 
-uint64_t DataView::getTime() const
-{
-    return dataTime;
+void DataView::mark() {
+    change = false;
 }
 
-void DataView::copyFrom(const DataView& other)
-{
-    history.clear();
-    for (auto it = other.history.begin(); it != other.history.end(); it++) {
-        history.push_back(*it);
+Type::Name DataView::getType() const {
+    return type.type;
+}
+
+Type DataView::typeData() const {
+    return type;
+}
+
+const char* DataView::getEnumString(const char* s, size_t index) {
+    if (index >= DATA_VIEW_ITEM_COUNT) {
+        throw std::runtime_error("Index out of size");
     }
-    now = history.begin();
-    for (auto it = other.history.begin(); it != other.history.end(); it++) {
-        if (other.now == it) {
-            break;
+    return s + (DATA_VIEW_ITEM_LENGTH + 1) * index;
+}
+
+char* DataView::getEnumString(char* s, size_t index) {
+    if (index >= DATA_VIEW_ITEM_COUNT) {
+        throw std::runtime_error("Index out of size");
+    }
+    return s + (DATA_VIEW_ITEM_LENGTH + 1) * index;
+}
+
+void DataView::setEnumString(char* s, const char* item, size_t index) {
+    if (index >= DATA_VIEW_ITEM_COUNT) {
+        throw std::runtime_error("Index out of size");
+    }
+    strcpy_s(s + (DATA_VIEW_ITEM_LENGTH + 1) * index, DATA_VIEW_ITEM_LENGTH + 1, item);
+}
+
+void DataView::initEnumString(char* s) {
+    memset(s, 0, sizeof(char) * (DATA_VIEW_ITEM_LENGTH + 1) * (DATA_VIEW_ITEM_COUNT) / sizeof(uint8_t));
+}
+
+int DataView::getActive(const char* s) {
+    const char* now = DataView::getEnumString(s, 0);
+    for (size_t i = 1; i < DATA_VIEW_ITEM_COUNT; i++) {
+        const char* item = DataView::getEnumString(s, i);
+        printf("cpm [%s] and [%s]\n", item, now);
+        if (strcmp(item, now) == 0) {
+            return i - 1;
         }
-        now++;
     }
-
-    value = other.value;
-    name = other.name;
-    context = other.context;
-    dataTime = other.dataTime;
+    return 0;
 }
-*/
 
+void DataView::makeEnum(DataView* dataview, const std::vector<std::string>& ss) {
+    if (dataview->typeData().type != Type::Name::Enum) {
+        throw std::runtime_error("Make enum with non enum DataView");
+    }
+    std::string buf;
+    buf.resize(dataview->typeData().size);
+    for (size_t i = 0; i < ss.size(); i++) {
+        DataView::setEnumString(buf.data(), ss[i].data(), i);
+    }
+    dataview->set(buf.data());
+}
 
-Type::Type(Name tname)
-{
+Type::Type(Name tname) {
     type = tname;
     switch (tname) {
     case Name::Char:
-        size = sizeof(char) / sizeof(char);
+        size = sizeof(char) / sizeof(uint8_t);
+        break;
+    case Name::Double:
+        size = sizeof(double) / sizeof(uint8_t);
+        break;
+    case Name::Float:
+        size = sizeof(float) / sizeof(uint8_t);
+        break;
+    case Name::Int:
+        size = sizeof(int) / sizeof(uint8_t);
+        break;
+    case Name::String:
+        size = sizeof(char) * (DATA_VIEW_STRING_LENGTH  + 1) / sizeof(uint8_t);
+        break;
+    case Name::Vec2:
+        size = sizeof(glm::vec2) / sizeof(uint8_t);
+        break;
+    case Name::Vec3:
+        size = sizeof(glm::vec3) / sizeof(uint8_t);
+        break;
+    case Name::Vec4:
+        size = sizeof(glm::vec4) / sizeof(uint8_t);
+        break;
+    case Name::Enum:
+        size = sizeof(char) * (DATA_VIEW_ITEM_LENGTH + 1) * (DATA_VIEW_ITEM_COUNT) / sizeof(uint8_t);
+        break;
     }
 }
+
+Type::Type(const Type& t): type(t.type), size(t.size) {
+
+}
+
+const Type DataView::tInt { Type::Name::Int };
+const Type DataView::tFloat { Type::Name::Float };
+const Type DataView::tDouble { Type::Name::Double };
+const Type DataView::tVec2 { Type::Name::Vec2 };
+const Type DataView::tVec3 { Type::Name::Vec3 };
+const Type DataView::tVec4 { Type::Name::Vec4 };
+const Type DataView::tString { Type::Name::String };
+const Type DataView::tChar { Type::Name::Char };
+const Type DataView::tEnum { Type::Name::Enum };

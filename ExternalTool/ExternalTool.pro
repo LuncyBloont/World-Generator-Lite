@@ -15,6 +15,7 @@ SOURCES += \
     mainwindow.cpp \
     model.cpp \
     sceneview.cpp \
+    sw_terrainworker.cpp \
     ui.cpp \
     wglcore.cpp
 
@@ -25,6 +26,7 @@ HEADERS += \
     mainwindow.h \
     model.h \
     sceneview.h \
+    sw_terrainworker.h \
     ui.h \
     wglcore.h \
     glm/glm/common.hpp \

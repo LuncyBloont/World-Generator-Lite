@@ -7,5 +7,9 @@
         <file>models/holeBall.obj</file>
         <file>models/ivyMonkey.obj</file>
         <file>textures/test.png</file>
+        <file>models/UFO.obj</file>
+        <file>textures/UFO-albedo.png</file>
+        <file>models/WGL.obj</file>
+        <file>textures/grass.png</file>
     </qresource>
 </RCC>

@@ -1,40 +1,24 @@
 #include "datacontext.h"
+#include "dataview.h"
 
-DataContext::DataContext()
-{
-    dataTime = 0;
+DataContext::DataContext() {
 }
 
-bool DataContext::isSaved() const
-{
-    return !unsaved;
+bool DataContext::isSaved() const {
+    for (const auto& d : data) {
+        if (d.second->isModified()) {
+            return false;
+        }
+    }
+    return true;
 }
 
-void DataContext::markUnsaved()
-{
-    unsaved = true;
+void DataContext::markSaved() {
+    for (auto& d : data) {
+        d.second->mark();
+    }
 }
 
-void DataContext::markSaved()
-{
-    unsaved = false;
-}
+void DataContext::insert(DataView* dataView) {
 
-void DataContext::fromOther(const DataContext& other)
-{
-    data.clear();
-    dataTime = other.dataTime;
-    // for (auto it = other.data.begin(); it != other.data.end(); it++) {
-        // data.insert(std::make_pair(it->first, ))
-    // }
-}
-
-uint64_t DataContext::getTime() const
-{
-    return dataTime;
-}
-
-void DataContext::modify()
-{
-    dataTime += 1;
 }

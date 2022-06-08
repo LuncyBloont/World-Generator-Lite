@@ -1,8 +1,7 @@
 #include "model.h"
 
 
-void Model::vertexInputAttributeDescription(VkVertexInputAttributeDescription* descriptions)
-{
+void Model::vertexInputAttributeDescription(VkVertexInputAttributeDescription* descriptions) {
    descriptions[0].binding = 0; // Use first buffer when vkCmdBindVertexBuffers()
    descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
    descriptions[0].location = 0; // location in shader.
@@ -34,15 +33,13 @@ void Model::vertexInputAttributeDescription(VkVertexInputAttributeDescription* d
    descriptions[5].offset = offsetof(Vertex, data1);
 }
 
-void Model::vertexInputBindingDescription(VkVertexInputBindingDescription& inputBinding)
-{
+void Model::vertexInputBindingDescription(VkVertexInputBindingDescription& inputBinding) {
    inputBinding.binding = 0; // Use first buffer when vkCmdBindVertexBuffers();
    inputBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
    inputBinding.stride = sizeof(Vertex);
 }
 
-void Model::loadFromOBJFile(const QString& fileName, Vertexs& model, Indexs& indexs, bool log)
-{
+void Model::loadFromOBJFile(const QString& fileName, Vertexs& model, Indexs& indexs, bool log) {
     model.clear();
     indexs.clear();
 
@@ -56,49 +53,57 @@ void Model::loadFromOBJFile(const QString& fileName, Vertexs& model, Indexs& ind
     QString buf;
     char type[16];
     float frg0, frg1, frg2;
-    while (!file.atEnd())
-    {
+    while (!file.atEnd()) {
         buf = file.readLine();
         const std::string str = buf.toStdString();
         const char* line = str.data();
-        if (sscanf(line, "%s %f %f %f", type, &frg0, &frg1, &frg2) == 4)
-        {
-            if (strcmp(type, "v") == 0)
-            {
+        if (sscanf(line, "%s %f %f %f", type, &frg0, &frg1, &frg2) == 4) {
+            if (strcmp(type, "v") == 0) {
                 rawVs.push_back(glm::vec3(frg0, frg1, frg2));
                 continue;
             }
-            if (strcmp(type, "vn") == 0)
-            {
+            if (strcmp(type, "vn") == 0) {
                 rawNs.push_back(glm::vec3(frg0, frg1, frg2));
                 continue;
             }
         }
-        if (sscanf(line, "%s %f %f", type, &frg0, &frg1) == 3)
-        {
-            if (strcmp(type, "vt") == 0)
-            {
+        if (sscanf(line, "%s %f %f", type, &frg0, &frg1) == 3) {
+            if (strcmp(type, "vt") == 0) {
                 rawUVs.push_back(glm::vec2(frg0, frg1));
                 continue;
             }
         }
-        if (sscanf(line, "%s", type) == 1)
-        {
-            if (strcmp(type, "f") == 0)
-            {
+        if (sscanf(line, "%s", type) == 1) {
+            if (strcmp(type, "f") == 0) {
                 size_t findex = str.find("f") + 1;
                 bool sping = true;
-                for (; findex < str.size(); findex++)
-                {
+                for (; findex < str.size(); findex++) {
                     if (str[findex] == ' ') { sping = true; }
-                    if (str[findex] != ' ' && sping)
-                    {
-                        uint32_t vid, uvid, nid;
-                        sscanf(line + findex, "%u/%u/%u", &vid, &uvid, &nid);
+                    if (str[findex] != ' ' && sping) {
+
+                        uint32_t vid = 0, uvid = 0, nid = 0;
+                        sscanf(line + findex, "%u/", &vid);
+                        for (; findex < str.size(); findex++) { if (str[findex] == '/') { findex++; break; } }
+                        sscanf(line + findex, "%u/", &uvid);
+                        for (; findex < str.size(); findex++) { if (str[findex] == '/') { findex++; break; } }
+                        sscanf(line + findex, "%u", &nid);
+
                         Vertex v;
-                        v.position = rawVs[vid - 1];
-                        v.uv = rawUVs[uvid - 1];
-                        v.normal = rawNs[nid - 1];
+                        if (vid > 0 && vid > rawVs.size()) {
+                            printf("vertex%u out of db\n", vid);
+                            exit(-1);
+                        }
+                        if (uvid > 0 && uvid > rawUVs.size()) {
+                            printf("UV%u out of db\n", uvid);
+                            exit(-1);
+                        }
+                        if (nid > 0 && nid > rawNs.size()) {
+                            printf("normal%u out of db\n", nid);
+                            exit(-1);
+                        }
+                        v.position = vid > 0 ? rawVs[vid - 1] : glm::vec3(0.0f);
+                        v.uv = uvid > 0 ? rawUVs[uvid - 1] : glm::vec2(v.position.x, v.position.z);
+                        v.normal = nid > 0 ? rawNs[nid - 1] : glm::vec3(1.0f, 0.0f, 0.0f);
                         model.push_back(v);
                         indexs.push_back(model.size() - 1);
                     }
@@ -108,20 +113,40 @@ void Model::loadFromOBJFile(const QString& fileName, Vertexs& model, Indexs& ind
             }
         }
     }
-    if (log)
-    {
+    if (log) {
         printf("MODEL\n");
-        for (size_t i = 0; i < model.size(); i++)
-        {
+        for (size_t i = 0; i < model.size(); i++) {
             printf("V(%f,%f,%f/%f,%f,%f/%f,%f)", model[i].position.x, model[i].position.y, model[i].position.z,
                    model[i].normal.x, model[i].normal.y, model[i].normal.z, model[i].uv.x, model[i].uv.y);
         }
         printf("\n\n");
-        for (size_t i = 0; i < indexs.size(); i++)
-        {
+        for (size_t i = 0; i < indexs.size(); i++) {
             printf("%u ", indexs[i]);
         }
         printf("\n\n");
     }
     printf("Load %llu vertexs.\n", model.size());
+}
+
+void Model::instanceInputAttributeDescription(VkVertexInputAttributeDescription* descriptions) {
+    descriptions[0].binding = 1;
+    descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    descriptions[0].location = VERTEX_INPUT_COUNT;
+    descriptions[0].offset = offsetof(Transform, position);
+
+    descriptions[1].binding = 1;
+    descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    descriptions[1].location = VERTEX_INPUT_COUNT + 1;
+    descriptions[1].offset = offsetof(Transform, rotation);
+
+    descriptions[2].binding = 1;
+    descriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+    descriptions[2].location = VERTEX_INPUT_COUNT + 2;
+    descriptions[2].offset = offsetof(Transform, scale);
+}
+
+void Model::instanceInputBindingDescription(VkVertexInputBindingDescription& inputBinding) {
+    inputBinding.binding = 1;
+    inputBinding.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+    inputBinding.stride = sizeof(Transform);
 }

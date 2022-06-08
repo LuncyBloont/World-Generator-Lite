@@ -14,30 +14,37 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
-class MainWindow : public QMainWindow
-{
+class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    MainWindow(SceneView* mview, SceneView* topView, QWidget *parent = nullptr);
     ~MainWindow();
+
+    void addWidgetToList(QWidget* w);
+    void pushLog(const std::string& s);
 
 private slots:
 
-    void on_viewToHillsButton_clicked();
+    void viewToHillsButton_clicked();
 
-    void on_viewToWaterButton_clicked();
+    void viewToWaterButton_clicked();
 
-    void on_viewToPlantButton_clicked();
+    void viewToPlantButton_clicked();
 
 private:
     Ui::MainWindow *ui;
-    SceneView* sceneView;
-    SceneView* topView;
-    QVulkanInstance* instance;
 
     bool topViewHills = true;
     bool topViewWater = true;
     bool topViewPlants = true;
+
+    std::string msgbuf;
+
+signals:
+    void signal_pushMessage();
+
+private slots:
+    void slot_pushMessage();
 };
 #endif // MAINWINDOW_H
