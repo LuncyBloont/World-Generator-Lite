@@ -14,7 +14,7 @@
 #include "dataview.h"
 
 class UI {
-private:
+public:
     MainWindow* mainWin;
     SceneView* topView;
     SceneView* mainView;

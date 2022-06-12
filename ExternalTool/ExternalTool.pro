@@ -9,23 +9,29 @@ CONFIG += c++11
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    camera.cpp \
     datacontext.cpp \
     dataview.cpp \
+    job.cpp \
     main.cpp \
     mainwindow.cpp \
     model.cpp \
     sceneview.cpp \
+    sw_renderworker.cpp \
     sw_terrainworker.cpp \
     ui.cpp \
     wglcore.cpp
 
 HEADERS += \
+    camera.h \
     datacontext.h \
     dataview.h \
     helperMacro.h \
+    job.h \
     mainwindow.h \
     model.h \
     sceneview.h \
+    sw_renderworker.h \
     sw_terrainworker.h \
     ui.h \
     wglcore.h \

@@ -130,23 +130,61 @@ void Model::loadFromOBJFile(const QString& fileName, Vertexs& model, Indexs& ind
 
 void Model::instanceInputAttributeDescription(VkVertexInputAttributeDescription* descriptions) {
     descriptions[0].binding = 1;
-    descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    descriptions[0].format = VK_FORMAT_R32G32B32A32_SFLOAT;
     descriptions[0].location = VERTEX_INPUT_COUNT;
-    descriptions[0].offset = offsetof(Transform, position);
+    descriptions[0].offset = offsetof(MMat, offsetRotate);
 
     descriptions[1].binding = 1;
-    descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    descriptions[1].location = VERTEX_INPUT_COUNT + 1;
-    descriptions[1].offset = offsetof(Transform, rotation);
+    descriptions[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    descriptions[1].location = VERTEX_INPUT_COUNT + 1; // offsetRotate is a mat4
+    descriptions[1].offset = offsetof(MMat, offsetRotate) + sizeof(glm::vec4);
 
     descriptions[2].binding = 1;
-    descriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
-    descriptions[2].location = VERTEX_INPUT_COUNT + 2;
-    descriptions[2].offset = offsetof(Transform, scale);
+    descriptions[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    descriptions[2].location = VERTEX_INPUT_COUNT + 2; // offsetRotate is a mat4
+    descriptions[2].offset = offsetof(MMat, offsetRotate) + sizeof(glm::vec4) * 2;
+
+    descriptions[3].binding = 1;
+    descriptions[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    descriptions[3].location = VERTEX_INPUT_COUNT + 3; // offsetRotate is a mat4
+    descriptions[3].offset = offsetof(MMat, offsetRotate) + sizeof(glm::vec4) * 3;
+
+    descriptions[4].binding = 1;
+    descriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    descriptions[4].location = VERTEX_INPUT_COUNT + 4; // offsetRotate is a mat4
+    descriptions[4].offset = offsetof(MMat, scale);
 }
 
 void Model::instanceInputBindingDescription(VkVertexInputBindingDescription& inputBinding) {
     inputBinding.binding = 1;
     inputBinding.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-    inputBinding.stride = sizeof(Transform);
+    inputBinding.stride = sizeof(MMat);
+}
+
+MMat Model::packTransform(Transform t) {
+    float cx = glm::cos(t.rotation.x);
+    float sx = glm::sin(t.rotation.x);
+    float cy = glm::cos(t.rotation.y);
+    float sy = glm::sin(t.rotation.y);
+    float cz = glm::cos(t.rotation.z);
+    float sz = glm::sin(t.rotation.z);
+    MMat mm;
+    mm.scale = glm::vec4(t.scale, 1.0f);
+    mm.offsetRotate = glm::mat4(1.0f, 0.0f, 0.0f, 0.0f,
+                                0.0f, 1.0f, 0.0f, 0.0f,
+                                0.0f, 0.0f, 1.0f, 0.0f,
+                                t.position.x, t.position.y, t.position.z, 1.0f) *
+                      glm::mat4(cz, -sz, 0.f, 0.f,
+                                sz, cz, 0.f, 0.f,
+                                0.f, 0.f, 1.f, 0.f,
+                                0.f, 0.f, 0.f, 1.f) *
+                      glm::mat4(1.f, 0.f, 0.f, 0.f,
+                                0.f, cx, -sx, 0.f,
+                                0.f, sx, cx, 0.f,
+                                0.f, 0.f, 0.f, 1.f) *
+                      glm::mat4(cy, 0.f, sy, 0.f,
+                                0.f, 1.f, 0.f, 0.f,
+                                -sy, 0.f, cy, 0.f,
+                                0.f, 0.f, 0.f, 1.f);;
+    return mm;
 }

@@ -51,7 +51,7 @@ public:
 
 private:
     std::vector<StepWorker*> workers;
-    WorkersThread* thread;
+    WorkersThread thread;
 
 public:
     // 供Workers修改和使用：

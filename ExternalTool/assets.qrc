@@ -5,11 +5,27 @@
         <file>models/smoothMonkey.obj</file>
         <file>models/cube.obj</file>
         <file>models/holeBall.obj</file>
-        <file>models/ivyMonkey.obj</file>
         <file>textures/test.png</file>
         <file>models/UFO.obj</file>
         <file>textures/UFO-albedo.png</file>
         <file>models/WGL.obj</file>
         <file>textures/grass.png</file>
+        <file>theme/main.qss</file>
+        <file>textures/env/x.jpg</file>
+        <file>textures/env/-x.jpg</file>
+        <file>textures/env/y.jpg</file>
+        <file>textures/env/-y.jpg</file>
+        <file>textures/env/z.jpg</file>
+        <file>textures/env/-z.jpg</file>
+        <file>models/sphere.obj</file>
+        <file>models/ivyMonkey.obj</file>
+        <file>shaders/env.frag.spv</file>
+        <file>shaders/env.vert.spv</file>
+        <file>textures/env/test/nx.png</file>
+        <file>textures/env/test/ny.png</file>
+        <file>textures/env/test/nz.png</file>
+        <file>textures/env/test/px.png</file>
+        <file>textures/env/test/py.png</file>
+        <file>textures/env/test/pz.png</file>
     </qresource>
 </RCC>

@@ -1,18 +1,13 @@
-#ifndef SW_TERRAINWORKER_H
-#define SW_TERRAINWORKER_H
-#include "datacontext.h"
+#ifndef SW_RENDERWORKER_H
+#define SW_RENDERWORKER_H
 #include "dataview.h"
 #include "wglcore.h"
-#include "sceneview.h"
-#include "model.h"
+#include "datacontext.h"
 
-class SW_TerrainWorker final : public StepWorker {
-    // 地形生成代理
-
+class SW_RenderWorker final : public StepWorker {
 public:
-    SW_TerrainWorker(WGLCore* core);
-    ~SW_TerrainWorker();
-
+    SW_RenderWorker(WGLCore* core);
+    ~SW_RenderWorker();
     void update() override;                              // 步进生成
     void reset() override;                               // 重置工作
     bool isComplete() const override;                    // 返回工作完成情况
@@ -23,14 +18,14 @@ public:
     const char* getName() const override;                // 返回名称
 
 private:
-    DataView* size;              // vec2
-    DataView* height;            // float
-    DataView* noiseType;         // enum
-    DataView* resolutionX;       // Int
-    DataView* resolutionY;       // Int
+    DataView* walkerR;
+    DataView* walkerS;
+    DataView* walkerM;
+    DataView* walkerC;
+    DataView* walkerType;
     WGLCore* core;
 
-    float test = 0.0f;
+    float wait = 0.0f;
 };
 
-#endif // SW_TERRAINWORKER_H
+#endif // SW_RENDERWORKER_H

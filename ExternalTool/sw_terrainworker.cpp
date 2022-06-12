@@ -38,6 +38,15 @@ void SW_TerrainWorker::setup() {
 void SW_TerrainWorker::bind(size_t id) {
     core->ui.addInfoTitle("地形生成");
 
+    int rx = 256;
+    int ry = 256;
+    resolutionX = new DataView("U分辨率", &rx, DataView::tInt, core, id);
+    core->dataContext.insert(resolutionX);
+    core->ui.addDataItem(resolutionX);
+    resolutionY = new DataView("V分辨率", &ry, DataView::tInt, core, id);
+    core->dataContext.insert(resolutionY);
+    core->ui.addDataItem(resolutionY);
+
     glm::vec2 dftsize = glm::vec2(128.0f, 128.0f);
     size = new DataView("尺寸", &dftsize, DataView::tVec2, core, id);
     core->dataContext.insert(size);

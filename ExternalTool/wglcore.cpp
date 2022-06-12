@@ -1,12 +1,11 @@
 #include "wglcore.h"
 
-WGLCore::WGLCore(const UI& ui): ui(ui) {
-    thread = new WorkersThread(this);
+WGLCore::WGLCore(const UI& ui): ui(ui), thread(this) {
 }
 
 WGLCore::~WGLCore() {
-    thread->stopWork();
-    thread->exit();
+    thread.stopWork();
+    thread.wait();
 }
 
 size_t WGLCore::addWorker(StepWorker* w) {
@@ -18,7 +17,7 @@ size_t WGLCore::addWorker(StepWorker* w) {
 
 void WGLCore::start() {
     printf("Core start\n");
-    thread->start();
+    thread.start();
 }
 
 uint32_t WGLCore::update() {

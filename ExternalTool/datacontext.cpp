@@ -20,5 +20,5 @@ void DataContext::markSaved() {
 }
 
 void DataContext::insert(DataView* dataView) {
-
+    data.insert({ dataView->getName(), dataView });
 }
