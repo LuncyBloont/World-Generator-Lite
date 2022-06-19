@@ -13,24 +13,29 @@ void Model::vertexInputAttributeDescription(VkVertexInputAttributeDescription* d
    descriptions[1].offset = offsetof(Vertex, normal);
 
    descriptions[2].binding = 0;
-   descriptions[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+   descriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
    descriptions[2].location = 2;
    descriptions[2].offset = offsetof(Vertex, tangent);
 
    descriptions[3].binding = 0;
-   descriptions[3].format = VK_FORMAT_R32G32_SFLOAT;
+   descriptions[3].format = VK_FORMAT_R32G32B32_SFLOAT;
    descriptions[3].location = 3;
-   descriptions[3].offset = offsetof(Vertex, uv);
+   descriptions[3].offset = offsetof(Vertex, biotangent);
 
    descriptions[4].binding = 0;
-   descriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+   descriptions[4].format = VK_FORMAT_R32G32_SFLOAT;
    descriptions[4].location = 4;
-   descriptions[4].offset = offsetof(Vertex, data0);
+   descriptions[4].offset = offsetof(Vertex, uv);
 
    descriptions[5].binding = 0;
    descriptions[5].format = VK_FORMAT_R32G32B32A32_SFLOAT;
    descriptions[5].location = 5;
-   descriptions[5].offset = offsetof(Vertex, data1);
+   descriptions[5].offset = offsetof(Vertex, data0);
+
+   descriptions[6].binding = 0;
+   descriptions[6].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+   descriptions[6].location = 6;
+   descriptions[6].offset = offsetof(Vertex, data1);
 }
 
 void Model::vertexInputBindingDescription(VkVertexInputBindingDescription& inputBinding) {
@@ -59,11 +64,11 @@ void Model::loadFromOBJFile(const QString& fileName, Vertexs& model, Indexs& ind
         const char* line = str.data();
         if (sscanf(line, "%s %f %f %f", type, &frg0, &frg1, &frg2) == 4) {
             if (strcmp(type, "v") == 0) {
-                rawVs.push_back(glm::vec3(frg0, frg1, frg2));
+                rawVs.push_back(glm::vec3(frg0, -frg2, frg1));
                 continue;
             }
             if (strcmp(type, "vn") == 0) {
-                rawNs.push_back(glm::vec3(frg0, frg1, frg2));
+                rawNs.push_back(glm::vec3(frg0, -frg2, frg1));
                 continue;
             }
         }
@@ -113,6 +118,28 @@ void Model::loadFromOBJFile(const QString& fileName, Vertexs& model, Indexs& ind
             }
         }
     }
+
+    size_t primFirstIndex = 0;
+    size_t localIndex = 0;
+    for (size_t i = 0; i < indexs.size(); i++) {
+        if (localIndex > 0) {
+            size_t left = i - 1;
+            size_t center = indexs[i] == IndexRestart ? primFirstIndex : i;
+            size_t right = (indexs[i + 1] == IndexRestart || i == indexs.size()) ? primFirstIndex : center + 1;
+            if (log) { printf("l %llu:%u; c %llu:%u; r %llu:%u\n", left, indexs[left], center, indexs[center], right, indexs[right]); }
+            float u1 = model[indexs[left]].uv.x - model[indexs[center]].uv.x;
+            float u2 = model[indexs[right]].uv.x - model[indexs[center]].uv.x;
+            float v1 = model[indexs[left]].uv.y - model[indexs[center]].uv.y;
+            float v2 = model[indexs[right]].uv.y - model[indexs[center]].uv.y;
+            glm::vec3 a = model[indexs[left]].position - model[indexs[center]].position;
+            glm::vec3 b = model[indexs[right]].position - model[indexs[center]].position;
+            model[indexs[center]].tangent = glm::normalize((v2 * a - v1 * b) / (v2 * u1 - v1 * u2));
+            model[indexs[center]].biotangent = glm::normalize((u2 * a - u1 * b) / (u2 * v1 - u1 * v2));
+        }
+        if (indexs[i] == IndexRestart) { primFirstIndex = i + 1; localIndex = 0; continue; }
+        localIndex++;
+    }
+
     if (log) {
         printf("MODEL\n");
         for (size_t i = 0; i < model.size(); i++) {
@@ -161,7 +188,7 @@ void Model::instanceInputBindingDescription(VkVertexInputBindingDescription& inp
     inputBinding.stride = sizeof(MMat);
 }
 
-MMat Model::packTransform(Transform t) {
+MMat Model::packTransform(Transform t, float normalScale) {
     float cx = glm::cos(t.rotation.x);
     float sx = glm::sin(t.rotation.x);
     float cy = glm::cos(t.rotation.y);
@@ -169,7 +196,7 @@ MMat Model::packTransform(Transform t) {
     float cz = glm::cos(t.rotation.z);
     float sz = glm::sin(t.rotation.z);
     MMat mm;
-    mm.scale = glm::vec4(t.scale, 1.0f);
+    mm.scale = glm::vec4(t.scale, normalScale);
     mm.offsetRotate = glm::mat4(1.0f, 0.0f, 0.0f, 0.0f,
                                 0.0f, 1.0f, 0.0f, 0.0f,
                                 0.0f, 0.0f, 1.0f, 0.0f,

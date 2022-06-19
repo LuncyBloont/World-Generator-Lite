@@ -3,9 +3,27 @@
 #include <QThread>
 #include <vector>
 #include <glm/glm/glm.hpp>
+#include <mutex>
 #include "datacontext.h"
 #include "model.h"
 #include "ui.h"
+#include "job.h"
+
+#define GEN_MEMORY int submitC = 1; int setupC = 0;
+#define MEMORY_SKIP if ((submitC == setupC && !resetup) || !isComplete()) { return; } setupC = submitC;
+#define CLEAR_MEMORY submitC++;
+
+#define MAKE_DATA(type, name, title, value, min, max, dtype, core, id) do {\
+    type dft##name = value, dft##name##min = min, dft##name##max = max;\
+    name = new DataView(title, &dft##name, &dft##name##min, &dft##name##max, dtype, core, id);\
+    core->add(name); } while (false);
+
+extern std::mutex renderLock0;
+extern std::mutex renderLock1;
+
+extern bool resetup;
+
+extern Job job;
 
 class WGLCore;
 
@@ -41,6 +59,12 @@ public:
     void start();                               // 核心启动
     uint32_t update();                              // 全局更新
     void wake(size_t id);
+    void wake(const std::string& name);
+
+    void add(DataView* view, StepWorker* worker);
+
+    void genSleep();
+    void genStart();
 
 private:
     void generate();
@@ -53,10 +77,38 @@ private:
     std::vector<StepWorker*> workers;
     WorkersThread thread;
 
+    std::vector<size_t> waitQueue;
+
 public:
     // 供Workers修改和使用：
     std::vector<std::vector<float> > heightMap;
     bool unGen = false;
 };
+
+namespace Core {
+
+struct Shader {
+    virtual glm::vec4 mainImage(glm::vec2 uv, glm::vec2 resolution) = 0;
+};
+
+QImage shaderIt(glm::vec2 size, Shader* shader);
+
+glm::vec4 texture(const QImage& img, glm::vec2 uv);
+
+void pic(QImage& image, Shader* shader, int x, int y);
+
+float hash(float s);
+glm::vec2 hash2(glm::vec2 uv);
+glm::vec2 hashPan(glm::vec2 uv);
+float slerp(float k);
+float mod(float s, float m);
+glm::vec2 mod2(glm::vec2 s, glm::vec2 m);
+glm::vec3 mod3(glm::vec3 s, glm::vec3 m);
+glm::vec4 mod4(glm::vec4 s, glm::vec4 m);
+
+float perline(glm::vec2 uv, glm::vec2 scale, glm::vec2 offset);
+float multiPerlin(glm::vec2 uv, glm::vec2 scale, glm::vec2 offset, float atte, int times);
+
+}
 
 #endif // WGLCORE_H

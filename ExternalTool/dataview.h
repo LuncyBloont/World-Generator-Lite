@@ -29,9 +29,11 @@ class DataView {
     // 数据视图（管理单个数据）
 
 public:
-    explicit DataView(const std::string name, void* val, Type type, WGLCore* core, size_t listener);
+    explicit DataView(const std::string name, void* val, void* minv, void* maxv, Type type, WGLCore* core, size_t listener);
     const void* get() const;                // 获取数据
-    void set(const void* val);              // 修改数据，报告监听者，标记已修改
+    const void* getMin() const;                // 获取数据
+    const void* getMax() const;                // 获取数据
+    void set(const void* val, bool call = true);              // 修改数据，报告监听者，标记已修改
     const std::string& getName() const;     // 获取名称
     bool isModified() const;                // 返回是否被修改
     void mark();                            // 标记为修改状态已知，之后isModified()将返回false
@@ -40,6 +42,8 @@ public:
 
 private:
     void* value;                    // 数据
+    void* min;
+    void* max;
     Type type;                      // 类型
     std::string name;               // 数据名称
     DataContext* context;           // 数据上下文

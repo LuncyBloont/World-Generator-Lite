@@ -4,14 +4,17 @@
 #include <glm/glm/glm.hpp>
 #include <glm/glm/gtc/matrix_transform.hpp>
 
-SceneView::SceneView(QVulkanWindow *parent, const DataContext* dataContext,
+std::mutex renderLoopLock;
+
+SceneView::SceneView(std::mutex* lock, QVulkanWindow *parent, const DataContext* dataContext,
                      QVulkanInstance* instance, const bool topView)
     : QVulkanWindow{parent}, dataContext(dataContext), instance(instance), topView(topView),
-      thread(this, 20) {
+      thread(this, 20), lock(lock) {
     setVulkanInstance(instance);
     setSampleCount(2);
     setCursor(Qt::CrossCursor);
     connect(this, &SceneView::updateSignal, this, &SceneView::updateSLot);
+    setPreferredColorFormats({ VK_FORMAT_R8G8B8A8_UNORM });
 }
 
 SceneView::~SceneView() {
@@ -20,7 +23,7 @@ SceneView::~SceneView() {
 }
 
 QVulkanWindowRenderer* SceneView::createRenderer() {
-    render = new Render(this, topView);
+    render = new Render(this, topView, lock);
     vcamera = render->camera;
     thread.start();
     return render;
@@ -46,119 +49,165 @@ void SceneView::wheelEvent(QWheelEvent* wheelEvent) {
 }
 
 void SceneView::updateSLot() {
+    renderLoopLock.lock();
     render->camera.lerp(vcamera, 0.3f);
+    // vcamera.lookAt({ 0.0f, 0.0f, 8.0f });
+    // vcamera.move({ 0.4f, 0.0f, 0.0f });
+    // render->camera = vcamera;
+    renderLoopLock.unlock();
 }
 
 void Render::textureInit() {
-    QImage testImageFile(":/assets/textures/grass.png");
-    QImage postImageFile = testImageFile.convertToFormat(QImage::Format_RGBA8888);
-    VkExtent2D testISize = { static_cast<uint32_t>(postImageFile.width()), static_cast<uint32_t>(postImageFile.height()) };
-    uint32_t testMipLevel = glm::floor(glm::log(glm::max(testISize.width, testISize.height)) / glm::log(2) + 0.5f);
-    createImage(testISize, testMipLevel, VK_FORMAT_R8G8B8A8_SRGB, testImageData, testImage,
-                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                testIMemory, testIMemoryRequirement, 0, 1, false);
-    createImageView(testImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_FORMAT_R8G8B8A8_SRGB, testMipLevel, testImageView, 0, 1);
-    fillImage(postImageFile.sizeInBytes(), testISize, testMipLevel, postImageFile.bits(), testImage, { 0, 0 }, 0, false);
-    genMipmaps(testImage, testISize, testMipLevel, 0);
+    loadImage(testAlbedo, ":/assets/textures/vase.png", SRGB, { 2048, 2048 });
+    loadImage(testPBR, ":/assets/textures/standardPBR.png", LINEAR, { 2048, 2048 });
+    loadImage(testNormal, ":/assets/textures/standardNormal.bmp", LINEAR, { 2048, 2048 });
 
-    QImage r_skyX(":/assets/textures/env/test/px.png");
-    QImage r_sky_X(":/assets/textures/env/test/nx.png");
-    QImage r_skyY(":/assets/textures/env/test/py.png");
-    QImage r_sky_Y(":/assets/textures/env/test/ny.png");
-    QImage r_skyZ(":/assets/textures/env/test/pz.png");
-    QImage r_sky_Z(":/assets/textures/env/test/nz.png");
-    QImage skyX = r_skyX.convertToFormat(QImage::Format_RGBA8888);
-    QImage sky_X = r_sky_X.convertToFormat(QImage::Format_RGBA8888);
-    QImage skyY = r_skyY.convertToFormat(QImage::Format_RGBA8888);
-    QImage sky_Y = r_sky_Y.convertToFormat(QImage::Format_RGBA8888);
-    QImage skyZ = r_skyZ.convertToFormat(QImage::Format_RGBA8888);
-    QImage sky_Z = r_sky_Z.convertToFormat(QImage::Format_RGBA8888);
-    VkExtent2D skySize = { static_cast<uint32_t>(skyX.width()), static_cast<uint32_t>(skyX.height()) };
-    uint32_t skyMipLevel = glm::floor(glm::log(glm::max(skySize.width, skySize.height)) / glm::log(2) + 0.5f);
-    createImage(skySize, skyMipLevel, VK_FORMAT_R8G8B8A8_SRGB, notuse, skyImage,
-                VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT, skyMemory, skyMemoryRequirement,
-                VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6, false);
-    createImageView(skyImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_FORMAT_R8G8B8A8_SRGB, skyMipLevel, skyImageView, 0, 6);
-    fillImage(skyX.sizeInBytes(), skySize, skyMipLevel, skyX.bits(), skyImage, { 0, 0 }, 0, false);
-    fillImage(sky_X.sizeInBytes(), skySize, skyMipLevel, sky_X.bits(), skyImage, { 0, 0 }, 1, true);
-    fillImage(skyY.sizeInBytes(), skySize, skyMipLevel, skyY.bits(), skyImage, { 0, 0 }, 2, true);
-    fillImage(sky_Y.sizeInBytes(), skySize, skyMipLevel, sky_Y.bits(), skyImage, { 0, 0 }, 3, true);
-    fillImage(skyZ.sizeInBytes(), skySize, skyMipLevel, skyZ.bits(), skyImage, { 0, 0 }, 4, true);
-    fillImage(sky_Z.sizeInBytes(), skySize, skyMipLevel, sky_Z.bits(), skyImage, { 0, 0 }, 5, true);
-    genMipmaps(skyImage, skySize, skyMipLevel, 0);
-    genMipmaps(skyImage, skySize, skyMipLevel, 1);
-    genMipmaps(skyImage, skySize, skyMipLevel, 2);
-    genMipmaps(skyImage, skySize, skyMipLevel, 3);
-    genMipmaps(skyImage, skySize, skyMipLevel, 4);
-    genMipmaps(skyImage, skySize, skyMipLevel, 5);
+    const char* skyPath[6] = {
+        ":/assets/textures/env/test/px.png",
+        ":/assets/textures/env/test/nx.png",
+        ":/assets/textures/env/test/py.png",
+        ":/assets/textures/env/test/ny.png",
+        ":/assets/textures/env/test/pz.png",
+        ":/assets/textures/env/test/nz.png"
+    };
+    loadCubemap(skyCubemap, skyPath, SRGB);
+
+    std::string plantsTexPath[] = {
+        ":/r/plants/larborLeaf.png",
+        ":/r/plants/arborLeaf.png",
+        ":/r/plants/lshrub.png",
+        ":/r/plants/shrubs.png",
+        ":/r/plants/flowers.png",
+        ":/r/plants/grassx.png",
+        ":/r/plants/climber.png",
+        ":/r/plants/stone.png"
+    };
+
+    std::string plantsNPath[] = {
+        ":/r/plants/larborN.png",
+        ":/r/plants/arborN.png",
+        ":/r/plants/lshrubN.png",
+        ":/r/plants/shrubN.png",
+        ":/r/plants/flowersN.png",
+        ":/r/plants/grassN.png",
+        ":/r/plants/climberN.png",
+        ":/r/plants/stoneN.png"
+    };
+
+    for (size_t i = 0; i < PLANT_TYPE_NUM; i++) {
+        loadImage(plantsAlbedo[i], plantsTexPath[i].data(), SRGB);
+        loadImage(plantsNormal[i], plantsNPath[i].data(), LINEAR);
+        loadImage(plantsPBR[i], ":/assets/textures/standardPBR.png", LINEAR);
+    }
+
+    const VkFormat shadow_format = SHADOW_FORMAT;
+    VkExtent2D shadowMapSize = { SHADOW_SIZE, SHADOW_SIZE };
+    for (int i = 0; i < 4; i++) {
+        createImage(shadowMapSize, 1, shadow_format, notuse, shadowMap[i].image,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, shadowMap[i].memory,
+                    shadowMap[i].requirement, 0, 1, false);
+        createImageView(shadowMap[i].image, VK_IMAGE_ASPECT_DEPTH_BIT, shadow_format, 1,
+                        shadowMap[i].view, 0, 1);
+        // makeDepthBuffer(shadowMap[i].image);
+
+        VkFramebufferCreateInfo shadowFrameInfo{};
+        shadowFrameInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        shadowFrameInfo.attachmentCount = 1;
+        shadowFrameInfo.pAttachments = &shadowMap[i].view;
+        shadowFrameInfo.width = SHADOW_SIZE;
+        shadowFrameInfo.height = SHADOW_SIZE;
+        shadowFrameInfo.layers = 1;
+        shadowFrameInfo.renderPass = shadowPass;
+        devFuncs->vkCreateFramebuffer(window->device(), &shadowFrameInfo, VDFT, &shadowFrameBuffer[i]);
+    }
+
 }
 
 void Render::vertexInit() {
-    createBuffer(MAX_HILL_VSIZE * VertexSize, hillVData,
-                 hillVertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                 hillMemory, hillMemoryRequirement, false);
+    loadVertex(terrainVertex, MAX_HILL_VSIZE * VertexSize);
 
-    createBuffer(MAX_HILL_I_SIZE * IndexSize, hillIndexData,
-                 hillIndexBuffer, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                 hillIndexMemory, hillIndexMemoryRequirement, false);
+    loadIndex(terrainIndex, MAX_HILL_I_SIZE * IndexSize);
 
     for (uint32_t i = 0; i < PLANT_TYPE_NUM; i++) {
-        createBuffer(MAX_PLANT_VSIZE * VertexSize, plantsVData[i],
-                     plantsVertexBuffers[i], VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                     plantsMemories[i], plantsMemoriesRequirements[i], false);
+        loadVertex(plantsVertex[i], MAX_PLANT_VSIZE * VertexSize);
 
-        createBuffer(MAX_PLANT_VSIZE * IndexSize, plantsIndexDatas[i],
-                     plantsIndexBuffers[i], VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                     plantsIndexMemories[i], plantsIndexMemoryRequirements[i], false);
+        loadVertex(plantsIndex[i], MAX_PLANT_I_SIZE * IndexSize);
     }
 
-    pushHill(monkey, monkeyIndex);
-
-    createBuffer(sizeof(glm::vec2) * 4, skyVertexData, skyVertexBuffer,
-                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, skyMemory,
-                 skyMemoryRequirement, false);
+    loadVertex(skyVertex, sizeof(glm::vec2) * 4);
     glm::vec2 skyPoints[4] = {
         { -1.0f, -1.0f }, { -1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f }
     };
-    skyVertexCount = 4;
-    fillBuffer(4 * sizeof(glm::vec2), skyPoints, skyVertexBuffer, 0);
+    skyVertex.count = 4;
+    fillBuffer(4 * sizeof(glm::vec2), skyPoints, skyVertex, 0);
 }
 
 void Render::uniformInit() {
-    createBuffer(uniformSize * window->concurrentFrameCount(),
-                 uniformData, uniform, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                 uniformMemory, unigormMemoryRequirement, true);
+    loadUniform(uniform, uniformSize * window->concurrentFrameCount());
 }
 
 void Render::instanceInit() {
-    createBuffer(MAX_PLANT_COUNT * InstanceSize, testInstanceData, testInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                 testInstanceMemory, testInstanceMemoryRequirement, true);
 
-    testInstanceCount = 128;
-    std::vector<MMat> idata;
-    for (uint32_t i = 0; i < testInstanceCount; i++) {
-        Transform t{};
-        t.position = glm::vec3(glm::sphericalRand(3.5f));
-        t.rotation = glm::vec3(glm::linearRand(0.0, 6.28), glm::linearRand(0.0, 6.28), glm::linearRand(0.0, 6.28));
-        t.scale = glm::vec3(0.5f);
-        idata.push_back(Model::packTransform(t));
+    loadInstance(testInstance, MAX_PLANT_COUNT * InstanceSize);
+
+    for (uint32_t i = 0; i < PLANT_TYPE_NUM; i++) {
+        loadInstance(plantsInstance[i], MAX_PLANT_COUNT * InstanceSize);
+        plantsInstance[i].count = 32;
+        std::vector<MMat> pidata;
+        for (uint32_t ii = 0; ii < plantsInstance[i].count; ii++) {
+            Transform t{};
+            t.position = glm::vec3(glm::sphericalRand(3.5f));
+            t.rotation = glm::vec3(glm::linearRand(0.0f, 0.0f),
+                                   glm::linearRand(0.0f, 0.0f),
+                                   glm::linearRand(0.0f, 6.28f));
+            t.scale = glm::vec3(glm::linearRand(2.7f, 3.4f));
+            pidata.push_back(Model::packTransform(t, 0.5f));
+        }
+        fillLocalData(plantsInstance[i], pidata.data(), pidata.size() * InstanceSize, 0);
     }
 
-    memcpy(testInstanceData, idata.data(), idata.size() * InstanceSize);
+    testInstance.count = 1;
+    std::vector<MMat> idata;
+    for (uint32_t i = 0; i < testInstance.count; i++) {
+        Transform t{};
+        t.position = glm::vec3(0.0); // glm::vec3(glm::sphericalRand(3.5f));
+        t.rotation = glm::vec3(0.0); // glm::vec3(glm::linearRand(0.0, 6.28), glm::linearRand(0.0, 6.28), glm::linearRand(0.0, 6.28));
+        t.scale = glm::vec3(1.0f);
+        idata.push_back(Model::packTransform(t, 1.0f));
+    }
+
+    fillLocalData(testInstance, idata.data(), idata.size() * InstanceSize, 0);
 }
 
-Render::Render(QVulkanWindow* w, const bool topView): topView(topView), window(w) {
-
+Render::Render(QVulkanWindow* w, const bool topView, std::mutex* lock): topView(topView), window(w), lock(lock) {
     camera.position = glm::vec3(5.0, 5.0, 3.0f);
     camera.lookAt(glm::vec3(0.0f, 0.0f, 0.0f));
 
-    Model::loadFromOBJFile(":/assets/models/smoothMonkey.obj", monkey, monkeyIndex, false);
+    Model::loadFromOBJFile(":/assets/models/cube-repeat-tex.obj", monkeyModel, monkeyModelIndex, false);
+    Model::loadFromOBJFile(":/r/plants/larbor.obj", plantsModel[0], plantsModelIndex[0]);
+    Model::loadFromOBJFile(":/r/plants/arbor.obj", plantsModel[1], plantsModelIndex[1]);
+    Model::loadFromOBJFile(":/r/plants/lshrubs.obj", plantsModel[2], plantsModelIndex[2]);
+    Model::loadFromOBJFile(":/r/plants/shrubs.obj", plantsModel[3], plantsModelIndex[3]);
+    Model::loadFromOBJFile(":/r/plants/flowers.obj", plantsModel[4], plantsModelIndex[4]);
+    Model::loadFromOBJFile(":/r/plants/grass.obj", plantsModel[5], plantsModelIndex[5]);
+    Model::loadFromOBJFile(":/r/plants/climber.obj", plantsModel[6], plantsModelIndex[6]);
+    Model::loadFromOBJFile(":/r/plants/stone.obj", plantsModel[7], plantsModelIndex[7]);
 
 }
 
 void Render::initResources() {
+    lock->lock();
+    printf("Use color space %u\n", static_cast<uint32_t>(window->colorFormat()));
+
     devFuncs = window->vulkanInstance()->deviceFunctions(window->device());
     functions = window->vulkanInstance()->functions();
+
+    createBasicRenderPass();
+
+    createMaxImage(); // to get max image memory size
+    fillBufferInit(); // create stage buffer
+    fillImageInit();  // create stage image buffer
+    createSampler();  // create image standard sampler
 
     uniformSet = new VkDescriptorSet[window->concurrentFrameCount()];
     // allocate uniform descriptor sets pointers.
@@ -169,23 +218,32 @@ void Render::initResources() {
     printf("Allcate %u uniform description set.\n", window->concurrentFrameCount());
     // get uniform create information.
 
-    createMaxImage(); // to get max image memory size
-    fillBufferInit(); // create stage buffer
-    fillImageInit();  // create stage image buffer
-    createSampler();  // create image standard sampler
-
-    vertexInit();
-
     uniformInit();
-
-    textureInit();
 
     loadShader();
 
+    vertexInit();
+
+    textureInit();
+
     instanceInit();
+
+    pushHill(monkeyModel, monkeyModelIndex);
+    for (uint32_t i = 0; i < PLANT_TYPE_NUM; i++) {
+        setPlant(plantsModel[i], plantsModelIndex[i], i);
+    }
 
     buildPipeline();
     buildSkyPipeline();
+    buildShadowPipeline();
+
+    if (window->swapChainImageSize().width() > 0 && window->swapChainImageSize().height() > 0)
+    {
+        resetup = true;
+    }
+
+    readyToRender = true;
+    lock->unlock();
 }
 
 void Render::initSwapChainResources() {
@@ -197,21 +255,25 @@ void Render::releaseSwapChainResources() {
 }
 
 void Render::releaseResources() {
+    lock->lock();
+    readyToRender = false;
+
     VkDevice dev = window->device();
-    devFuncs->vkFreeMemory(dev, hillMemory, VDFT);
-    devFuncs->vkFreeMemory(dev, hillIndexMemory, VDFT);
-    devFuncs->vkDestroyBuffer(dev, hillVertexBuffer, VDFT);
-    devFuncs->vkDestroyBuffer(dev, hillIndexBuffer, VDFT);
+
+    destroyBuffer(terrainVertex);
+    destroyBuffer(terrainIndex);
 
     for (uint32_t i = 0; i < PLANT_TYPE_NUM; i++) {
-        devFuncs->vkFreeMemory(dev, plantsMemories[i], VDFT);
-        devFuncs->vkFreeMemory(dev, plantsIndexMemories[i], VDFT);
-        devFuncs->vkDestroyBuffer(dev, plantsVertexBuffers[i], VDFT);
-        devFuncs->vkDestroyBuffer(dev, plantsIndexBuffers[i], VDFT);
+        // devFuncs->vkFreeMemory(dev, plantsMemories[i], VDFT);
+        // devFuncs->vkFreeMemory(dev, plantsIndexMemories[i], VDFT);
+        // devFuncs->vkDestroyBuffer(dev, plantsVertexBuffers[i], VDFT);
+        // devFuncs->vkDestroyBuffer(dev, plantsIndexBuffers[i], VDFT);
     }
 
-    devFuncs->vkFreeMemory(dev, uniformMemory, VDFT);
-    devFuncs->vkDestroyBuffer(dev, uniform, VDFT);
+    // devFuncs->vkFreeMemory(dev, uniformMemory, VDFT);
+    // devFuncs->vkDestroyBuffer(dev, uniform, VDFT);
+    destroyBuffer(uniform);
+
     devFuncs->vkDestroyDescriptorSetLayout(dev, uniformSetLayout, VDFT);
     for (int i = 0; i < window->concurrentFrameCount(); i++) {
         devFuncs->vkFreeDescriptorSets(dev, uniformPool, 1, &uniformSet[i]);
@@ -232,22 +294,22 @@ void Render::releaseResources() {
     devFuncs->vkDestroyPipelineLayout(dev, standardPipelineLayout, VDFT);
     devFuncs->vkDestroyPipeline(dev, standardPipeline, VDFT);
 
-    devFuncs->vkDestroyImageView(dev, testImageView, VDFT);
-    devFuncs->vkDestroyImage(dev, testImage, VDFT);
-    devFuncs->vkFreeMemory(dev, testIMemory, VDFT);
+    destroyImage(testAlbedo);
 
     devFuncs->vkDestroySampler(dev, standSampler, VDFT);
 
-    devFuncs->vkFreeMemory(dev, testInstanceMemory, VDFT);
-    devFuncs->vkDestroyBuffer(dev, testInstanceBuffer, VDFT);
+    destroyBuffer(testInstance);
 
-    devFuncs->vkFreeMemory(dev, skyVertexMemory, VDFT);
-    devFuncs->vkDestroyBuffer(dev, skyVertexBuffer, VDFT);
+    destroyBuffer(skyVertex);
 
-    devFuncs->vkDestroyImageView(dev, skyImageView, VDFT);
-    devFuncs->vkDestroyImage(dev, skyImage, VDFT);
-    devFuncs->vkFreeMemory(dev, skyMemory, VDFT);
+    destroyImage(skyCubemap);
 
+    for (size_t i = 0; i < 8; i++) {
+        destroyImage(plantsAlbedo[i]);
+    }
+
+    resetup = false;
+    lock->unlock();
 }
 
 void Render::logicalDeviceLost() {
@@ -260,13 +322,127 @@ void Render::physicalDeviceLost() {
     QVulkanWindowRenderer::physicalDeviceLost();
 }
 
+void Render::preInitResources() {
+
+}
+
 void Render::startNextFrame() {
+    lock->lock();
+    renderLoopLock.lock();
+
+    // camera.lerp(static_cast<SceneView*>(window)->vcamera, 0.3f);
+
     green += 0.005f;
     if (green > 1.0f)
         green = 0.0f;
 
-    VkClearColorValue clearColor = {{ green, green, 0.0f, 1.0f }};
     VkClearDepthStencilValue clearDS = { 1.0f, 0 };
+
+    VkCommandBuffer cmdBuf = window->currentCommandBuffer();
+
+    VkViewport viewport{};
+    viewport.width = window->swapChainImageSize().width();
+    viewport.height = window->swapChainImageSize().height();
+    viewport.minDepth = 0.0;
+    viewport.maxDepth = 1.0;
+    viewport.x = 0.0;
+    viewport.y = 0.0;
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = VkExtent2D {
+        U32(window->swapChainImageSize().width()),
+        U32(window->swapChainImageSize().height())
+    };
+
+    Uniform unif{};
+    unif.time = static_cast<float>(clock() / 1000.0f);
+
+    unif.resolution = glm::vec4(static_cast<float>(scissor.extent.width),
+                                static_cast<float>(scissor.extent.height),
+                                1.0f, 1.0f);
+    unif.baseColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    unif.pbrRSMC = glm::vec4(testPBRInfo.roughness, testPBRInfo.specular, testPBRInfo.metallic, testPBRInfo.contrast);
+    unif.pbrBase = glm::vec4(testPBRBase.roughness, testPBRBase.specular, testPBRBase.metallic, testPBRBase.contrast);
+    unif.subsurface = testPBRInfo.ss;
+    unif.ssbase = testPBRBase.ss;
+    unif.etc.x = renderType;
+    unif.m = glm::mat4(1.0f, 0.0f, 0.0f, 0.0f,
+                       0.0f, 1.0f, 0.0f, 0.0f,
+                       0.0f, 0.0f, 1.0f, 0.0f,
+                       0.0f, 0.0f, 0.0f, 1.0f);
+    unif.v = camera.getV();
+    unif.p = camera.getP(glm::vec2(static_cast<float>(scissor.extent.width),
+                                   static_cast<float>(scissor.extent.height)));
+    unif.mvp = unif.p * unif.v * unif.m;
+    unif.sun = glm::vec4(1.0f, 0.93f, 0.8f, 1.59f);
+    unif.sunDir = -glm::normalize(glm::vec3(1.0, 0.2, 1.0));
+    unif.scale = glm::vec4(1.0);
+    unif.fog = { 0.4f, 0.2f };
+    unif.fogColor = { 0.8f, 0.75f, 0.7f };
+
+    albedoView = testAlbedo.view; PBRView = testPBR.view; normalView = testNormal.view;
+    skyView = skyCubemap.view;
+    updateUniforms(false, window->currentFrame());
+
+    VkDeviceSize offsets[] = { 0 };
+
+    uint32_t dynamicBinding = 0;
+
+    // ########### shadow pass #########################
+    for (int i = 0; i < 4; i++) {
+        unif.shadowBias = glm::vec2(0.005f, 0.05f);
+        unif.shadowV = camera.getShadowV(unif.sunDir, 3.0f, i, -3.0f, 3.0f);
+        fillLocalData(uniform, &unif, sizeof(Uniform), window->currentFrame() * uniformSize);
+
+        VkRenderPassBeginInfo sdBeginInfo{};
+        sdBeginInfo.renderArea.extent.width = SHADOW_SIZE;
+        sdBeginInfo.renderArea.extent.height = SHADOW_SIZE;
+        sdBeginInfo.renderArea.offset = { 0, 0 };
+        sdBeginInfo.renderPass = shadowPass;
+        sdBeginInfo.clearValueCount = 1;
+        sdBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        sdBeginInfo.framebuffer = shadowFrameBuffer[i];
+        VkClearValue sdClear{};
+        VkClearDepthStencilValue sdClearDS = { 1.0f, 0 };
+        sdClear.depthStencil = sdClearDS;
+        sdBeginInfo.pClearValues = &sdClear;
+
+        VkViewport sdViewport{};
+        sdViewport.height = SHADOW_SIZE;
+        sdViewport.width = SHADOW_SIZE;
+        sdViewport.x = 0;
+        sdViewport.y = 0;
+        sdViewport.minDepth = 0.0f;
+        sdViewport.maxDepth = 1.0f;
+
+        VkRect2D sdDcissors{};
+        sdDcissors.offset = { 0, 0 };
+        sdDcissors.extent = { SHADOW_SIZE, SHADOW_SIZE };
+
+        devFuncs->vkCmdSetViewport(cmdBuf, 0, 1, &sdViewport);
+        devFuncs->vkCmdSetScissor(cmdBuf, 0, 1, &sdDcissors);
+
+        devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout, 0, 1,
+                                          &uniformSet[window->currentFrame()], 1, &dynamicBinding);
+
+        devFuncs->vkCmdBeginRenderPass(cmdBuf, &sdBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        devFuncs->vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+
+        drawObjects(cmdBuf);
+
+        devFuncs->vkCmdEndRenderPass(cmdBuf);
+    }
+
+    // ########### shadow pass #########################
+
+    unif.shadowBias = glm::vec2(0.005f, 0.05f);
+    unif.shadowV = camera.getShadowV(unif.sunDir, 3.0f, 1, -3.0f, 3.0f);
+    fillLocalData(uniform, &unif, sizeof(Uniform), window->currentFrame() * uniformSize);
+
+    VkClearColorValue clearColor = {{ green, green, 0.0f, 1.0f }};
+
     VkClearValue clearValues[3] = {};
     clearValues[0].color = clearColor;
     clearValues[1].depthStencil = clearDS;
@@ -283,43 +459,6 @@ void Render::startNextFrame() {
     rpBeginInfo.renderArea.extent.height = sz.height();
     rpBeginInfo.clearValueCount = window->sampleCountFlagBits() > VK_SAMPLE_COUNT_1_BIT ? 3 : 2;
     rpBeginInfo.pClearValues = clearValues;
-    VkCommandBuffer cmdBuf = window->currentCommandBuffer();
-
-    VkViewport viewport{};
-    viewport.width = window->swapChainImageSize().width();
-    viewport.height = window->swapChainImageSize().height();
-    viewport.minDepth = 0.0;
-    viewport.maxDepth = 1.0;
-    viewport.x = 0.0;
-    viewport.y = 0.0;
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = VkExtent2D {
-        static_cast<uint32_t>(window->swapChainImageSize().width()),
-        static_cast<uint32_t>(window->swapChainImageSize().height())
-    };
-
-    Uniform unif{};
-    unif.time = static_cast<float>(clock() / 1000.0f);
-
-    unif.resolution = glm::vec4(static_cast<float>(scissor.extent.width), static_cast<float>(scissor.extent.height), 1.0f, 1.0f);
-    unif.baseColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    unif.bprRSMC = glm::vec4(testPBR.roughness, testPBR.specular, testPBR.metallic, testPBR.contrast);
-    unif.etc.x = renderType;
-    unif.m = glm::mat4(1.0f, 0.0f, 0.0f, 0.0f,
-                       0.0f, 1.0f, 0.0f, 0.0f,
-                       0.0f, 0.0f, 1.0f, 0.0f,
-                       0.0f, 0.0f, 0.0f, 1.0f);
-    unif.v = camera.getV();
-    unif.p = camera.getP(glm::vec2(static_cast<float>(scissor.extent.width), static_cast<float>(scissor.extent.height)));
-    unif.mvp = unif.p * unif.v * unif.m;
-    unif.sun = glm::vec4(1.0f, 0.97f, 0.9f, 0.6f);
-    unif.sunDir = glm::normalize(glm::vec3(-0.1, 0.9, -0.8));
-    memcpy(static_cast<uint8_t*>(uniformData) + window->currentFrame() * uniformSize, &unif, sizeof(Uniform));
-
-    VkDeviceSize offsets[] = { 0 };
-    VkDeviceSize instanceOffsets[] = { 0 };
 
     devFuncs->vkCmdBeginRenderPass(cmdBuf, &rpBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -328,41 +467,45 @@ void Render::startNextFrame() {
     devFuncs->vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     devFuncs->vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
+    updateUniforms(false, window->currentFrame());
+
     devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, skyBoxPipelineLayout, 0, 1,
-                                      &uniformSet[window->currentFrame()], 0, nullptr);
+                                      &uniformSet[window->currentFrame()], 1, &dynamicBinding);
 
     offsets[0] = 0;
-    devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &skyVertexBuffer, offsets);
+    devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &skyVertex.buffer, offsets);
 
-    devFuncs->vkCmdDraw(cmdBuf, skyVertexCount, 1, 0, 0);
+    devFuncs->vkCmdDraw(cmdBuf, skyVertex.count, 1, 0, 0);
 
     devFuncs->vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, standardPipeline);
 
     devFuncs->vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     devFuncs->vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
-    devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, standardPipelineLayout, 0, 1,
-                                      &uniformSet[window->currentFrame()], 0, nullptr);
-
-    offsets[0] = 0;
-    instanceOffsets[0] = 0;
-    devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &hillVertexBuffer, offsets);
-    devFuncs->vkCmdBindIndexBuffer(cmdBuf, hillIndexBuffer, 0, IndexType);
-
-    devFuncs->vkCmdBindVertexBuffers(cmdBuf, 1, 1, &testInstanceBuffer, instanceOffsets);
-    devFuncs->vkCmdDrawIndexed(cmdBuf, hillIndexCount, testInstanceCount, 0, 0, 0);
+    drawObjects(cmdBuf);
 
     devFuncs->vkCmdEndRenderPass(cmdBuf);
 
     window->frameReady();
     window->requestUpdate(); // render continuously, throttled by the presentation rate
+
+    renderLoopLock.unlock();
+    lock->unlock();
+
 }
 
 void Render::pushHill(const Vertexs& vs, const Indexs& index) {
-    fillBuffer(vs.size() * VertexSize, vs.data(), hillVertexBuffer, 0);
-    hillVsCount = vs.size();
-    fillBuffer(index.size() * IndexSize, index.data(), hillIndexBuffer, 0);
-    hillIndexCount = index.size();
+    fillBuffer(vs.size() * VertexSize, vs.data(), terrainVertex, 0);
+    terrainVertex.count = vs.size();
+    fillBuffer(index.size() * IndexSize, index.data(), terrainIndex, 0);
+    terrainIndex.count = index.size();
+}
+
+void Render::setPlant(const Vertexs& vs, const Indexs& index, uint32_t id) {
+    fillBuffer(vs.size() * VertexSize, vs.data(), plantsVertex[id], 0);
+    plantsVertex[id].count = vs.size();
+    fillBuffer(index.size() * IndexSize, index.data(), plantsIndex[id], 0);
+    plantsIndex[id].count = index.size();
 }
 
 void Render::createBuffer(uint32_t size, void*& data, VkBuffer& buffer, VkBufferUsageFlags usage,
@@ -398,9 +541,9 @@ void Render::createBuffer(uint32_t size, void*& data, VkBuffer& buffer, VkBuffer
     if (local) { VK(devFuncs->vkMapMemory(window->device(), memory, 0, memoryRequirement.size, 0, &data)); }
 }
 
-void Render::createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, void*& data, VkImage& image, VkImageUsageFlags usage,
-                         VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, VkImageCreateFlags flags,
-                         uint32_t layerCount, bool local) {
+void Render::createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, void*& data, VkImage& image,
+                         VkImageUsageFlags usage, VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement,
+                         VkImageCreateFlags flags, uint32_t layerCount, bool local, VkExtent2D size) {
     VkImageCreateInfo imageCreateInfo{};
     imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -418,7 +561,32 @@ void Render::createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format,
     imageCreateInfo.flags = flags;
     VK(devFuncs->vkCreateImage(window->device(), &imageCreateInfo, VDFT, &image));
 
-    devFuncs->vkGetImageMemoryRequirements(window->device(), layerCount > 1 ? maxCubeTexture : maxTexture, &memoryRequirement);
+    if (size.width == 0 && size.height == 0) {
+        devFuncs->vkGetImageMemoryRequirements(window->device(), layerCount > 1 ? maxCubeTexture : maxTexture,
+                                               &memoryRequirement);
+    } else {
+        VkImage sizeTemp;
+        VkImageCreateInfo imageCreateInfo{};
+        imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageCreateInfo.extent.width = size.width;
+        imageCreateInfo.extent.height = size.height;
+        imageCreateInfo.extent.depth = 1;
+        imageCreateInfo.arrayLayers = layerCount;
+        imageCreateInfo.format = format;
+        imageCreateInfo.initialLayout = local ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
+        imageCreateInfo.mipLevels = mipsLevel;
+        imageCreateInfo.tiling = local ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+        imageCreateInfo.usage = usage;
+        imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageCreateInfo.flags = flags;
+        VK(devFuncs->vkCreateImage(window->device(), &imageCreateInfo, VDFT, &sizeTemp));
+
+        devFuncs->vkGetImageMemoryRequirements(window->device(), sizeTemp, &memoryRequirement);
+
+        devFuncs->vkDestroyImage(window->device(), sizeTemp, VDFT);
+    }
 
     VkMemoryAllocateInfo memoryAllocateInfo{};
     memoryAllocateInfo.memoryTypeIndex = 1;
@@ -441,6 +609,27 @@ void Render::createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format,
     VK(devFuncs->vkBindImageMemory(window->device(), image, memory, 0));
 
     if (local) { devFuncs->vkMapMemory(window->device(), memory, 0, memoryRequirement.size, 0, &data); }
+}
+
+void Render::createImageOnly(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, Texture2D& tex,
+                             VkImageUsageFlags usage, VkImageCreateFlags flags, uint32_t layerCount, bool local) {
+    VkImageCreateInfo imageCreateInfo{};
+    imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageCreateInfo.extent.width = extent.width;
+    imageCreateInfo.extent.height = extent.height;
+    imageCreateInfo.extent.depth = 1;
+    imageCreateInfo.arrayLayers = layerCount;
+    imageCreateInfo.format = format;
+    imageCreateInfo.initialLayout = local ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
+    imageCreateInfo.mipLevels = mipsLevel;
+    imageCreateInfo.tiling = local ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+    imageCreateInfo.usage = usage;
+    imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageCreateInfo.flags = flags;
+    VK(devFuncs->vkCreateImage(window->device(), &imageCreateInfo, VDFT, &tex.image));
+    VK(devFuncs->vkBindImageMemory(window->device(), tex.image, tex.memory, 0));
 }
 
 void Render::createMaxImage()
@@ -479,7 +668,55 @@ void Render::createMaxImage()
     VK(devFuncs->vkCreateImage(window->device(), &cubeCreateInfo, VDFT, &maxCubeTexture));
 }
 
-void Render::fillBuffer(uint32_t size, const void* data, VkBuffer buffer, uint32_t offset) {
+void Render::makeDepthBuffer(VkImage image) {
+    VkCommandBuffer cmdBuf;
+    VkCommandBufferAllocateInfo cmdAllcoateInfo{};
+    cmdAllcoateInfo.commandBufferCount = 1;
+    cmdAllcoateInfo.commandPool = window->graphicsCommandPool();
+    cmdAllcoateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAllcoateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    VK(devFuncs->vkAllocateCommandBuffers(window->device(), &cmdAllcoateInfo, &cmdBuf));
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    devFuncs->vkBeginCommandBuffer(cmdBuf, &beginInfo);
+
+    VkImageMemoryBarrier makeImageDstBarrier{};
+    makeImageDstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    makeImageDstBarrier.image = image;
+    makeImageDstBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    makeImageDstBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    makeImageDstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    makeImageDstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    makeImageDstBarrier.srcAccessMask = VK_ACCESS_NONE;
+    makeImageDstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    makeImageDstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    makeImageDstBarrier.subresourceRange.baseArrayLayer = 0;
+    makeImageDstBarrier.subresourceRange.baseMipLevel = 0;
+    makeImageDstBarrier.subresourceRange.layerCount = 1;
+    makeImageDstBarrier.subresourceRange.levelCount = 1;
+    devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   0,
+                                   0, nullptr,
+                                   0, nullptr,
+                                   1, &makeImageDstBarrier);
+
+    devFuncs->vkEndCommandBuffer(cmdBuf);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    devFuncs->vkQueueSubmit(window->graphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    devFuncs->vkQueueWaitIdle(window->graphicsQueue());
+
+    devFuncs->vkFreeCommandBuffers(window->device(), window->graphicsCommandPool(), 1, &cmdBuf);
+}
+
+void Render::fillBuffer(uint32_t size, const void* data, IBuffer buffer, VkDeviceSize offset) {
     void* GPUData;
     devFuncs->vkMapMemory(window->device(), tmpBufferMemory, 0, tmpBufferRequirement.size, 0, &GPUData);
     memcpy(GPUData, data, size);
@@ -504,7 +741,7 @@ void Render::fillBuffer(uint32_t size, const void* data, VkBuffer buffer, uint32
     copy.dstOffset = offset;
     copy.srcOffset = 0;
     copy.size = size;
-    devFuncs->vkCmdCopyBuffer(cmdBuf, tmpBuffer, buffer, 1, &copy);
+    devFuncs->vkCmdCopyBuffer(cmdBuf, tmpBuffer, buffer.buffer, 1, &copy);
 
     devFuncs->vkEndCommandBuffer(cmdBuf);
 
@@ -532,7 +769,8 @@ void Render::fillBufferInit() {
     VkPhysicalDeviceMemoryProperties memoryProperties;
     functions->vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(), &memoryProperties);
     for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
-        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
             if (tmpBufferRequirement.memoryTypeBits & (1 << i)) {
                 tmpAllocateInfo.memoryTypeIndex = i;
                 break;
@@ -545,7 +783,7 @@ void Render::fillBufferInit() {
     VK(devFuncs->vkBindBufferMemory(window->device(), tmpBuffer, tmpBufferMemory, 0));
 }
 
-void Render::fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, const void* data, VkImage image,
+void Render::fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, const void* data, Texture2D image,
                        VkOffset2D offset, uint32_t layer, bool protectOld) {
     void* GPUData;
     devFuncs->vkMapMemory(window->device(), tmpImageMemory, 0, tmpImageRequirement.size, 0, &GPUData);
@@ -568,7 +806,7 @@ void Render::fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, con
 
     VkImageMemoryBarrier makeImageDstBarrier{};
     makeImageDstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    makeImageDstBarrier.image = image;
+    makeImageDstBarrier.image = image.image;
     makeImageDstBarrier.oldLayout = protectOld ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
     makeImageDstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     makeImageDstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -596,11 +834,11 @@ void Render::fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, con
     copy.imageSubresource.baseArrayLayer = layer;
     copy.imageSubresource.layerCount = 1;
     copy.imageSubresource.mipLevel = 0;
-    devFuncs->vkCmdCopyBufferToImage(cmdBuf, tmpImage, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    devFuncs->vkCmdCopyBufferToImage(cmdBuf, tmpImage, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
     VkImageMemoryBarrier makeImageShaderUseBarrier{};
     makeImageShaderUseBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    makeImageShaderUseBarrier.image = image;
+    makeImageShaderUseBarrier.image = image.image;
     makeImageShaderUseBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     makeImageShaderUseBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     makeImageShaderUseBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -646,7 +884,8 @@ void Render::fillImageInit() {
     VkPhysicalDeviceMemoryProperties memoryProperties;
     functions->vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(), &memoryProperties);
     for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
-        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
             if (tmpImageRequirement.memoryTypeBits & (1 << i)) {
                 tmpMemoryAllocateInfo.memoryTypeIndex = i;
                 break;
@@ -668,7 +907,7 @@ void Render::buildPipeline() {
     setLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 
     VkDescriptorSetLayoutBinding uniBinding{};
-    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     uniBinding.binding = 0;
     uniBinding.descriptorCount = 1;
     uniBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -687,9 +926,20 @@ void Render::buildPipeline() {
     skyBinding.binding = 3;
     skyBinding.descriptorCount = 1;
     skyBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding normalBinding{};
+    normalBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    normalBinding.binding = 4;
+    normalBinding.descriptorCount = 1;
+    normalBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding shadowBinding{};
+    shadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    shadowBinding.binding = 5;
+    shadowBinding.descriptorCount = 1;
+    shadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
 
-    VkDescriptorSetLayoutBinding bindings[] = { uniBinding, texBinding0, pbrBinding, skyBinding };
-    setLayoutCreateInfo.bindingCount = 4;
+    VkDescriptorSetLayoutBinding bindings[] = { uniBinding, texBinding0, pbrBinding,
+                                                skyBinding, normalBinding, shadowBinding };
+    setLayoutCreateInfo.bindingCount = 6;
     setLayoutCreateInfo.pBindings = bindings;
     VK(devFuncs->vkCreateDescriptorSetLayout(window->device(), &setLayoutCreateInfo, VDFT, &uniformSetLayout));
 
@@ -700,7 +950,7 @@ void Render::buildPipeline() {
 
     VkDescriptorPoolSize uniPoolSize{};
     uniPoolSize.descriptorCount = window->concurrentFrameCount();
-    uniPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uniPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     VkDescriptorPoolSize texPoolSize0{};
     texPoolSize0.descriptorCount = window->concurrentFrameCount();
     texPoolSize0.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -710,9 +960,12 @@ void Render::buildPipeline() {
     VkDescriptorPoolSize skyPoolSize{};
     skyPoolSize.descriptorCount = window->concurrentFrameCount();
     skyPoolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    VkDescriptorPoolSize poolSizes[] = { uniPoolSize, texPoolSize0, pbrPoolSize, skyPoolSize };
+    VkDescriptorPoolSize normalPoolSize{};
+    normalPoolSize.descriptorCount = window->concurrentFrameCount();
+    normalPoolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    VkDescriptorPoolSize poolSizes[] = { uniPoolSize, texPoolSize0, pbrPoolSize, skyPoolSize, normalPoolSize };
 
-    poolCreateInfo.poolSizeCount = 4;
+    poolCreateInfo.poolSizeCount = 5;
     poolCreateInfo.pPoolSizes = poolSizes;
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.maxSets = window->concurrentFrameCount();
@@ -744,7 +997,7 @@ void Render::buildPipeline() {
 
     VkGraphicsPipelineCreateInfo graphicsPipelineCreateInfo{};
     graphicsPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    graphicsPipelineCreateInfo.layout = standardPipelineLayout; // TODO
+    graphicsPipelineCreateInfo.layout = standardPipelineLayout;
     graphicsPipelineCreateInfo.pColorBlendState = &colorInfo;
     VkPipelineMultisampleStateCreateInfo AACreateInfo{};
     AACreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -794,7 +1047,7 @@ void Render::buildPipeline() {
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
     rasterizer.depthBiasEnable = VK_FALSE;
@@ -813,66 +1066,14 @@ void Render::buildPipeline() {
     dynamicStateCreateInfo.pDynamicStates = dynamicStates;
     graphicsPipelineCreateInfo.pDynamicState = &dynamicStateCreateInfo;
 
-    VK(devFuncs->vkCreateGraphicsPipelines(window->device(), VDFT, 1, &graphicsPipelineCreateInfo, VDFT, &standardPipeline));
+    VK(devFuncs->vkCreateGraphicsPipelines(window->device(), VDFT, 1, &graphicsPipelineCreateInfo, VDFT,
+                                           &standardPipeline));
 
-
-    for (int i = 0; i < window->concurrentFrameCount(); i++) {
-        VkWriteDescriptorSet uniformWrite{};
-        uniformWrite.descriptorCount = 1;
-        uniformWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uniformWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        uniformWrite.dstArrayElement = 0;
-        uniformWrite.dstSet = uniformSet[i];
-        uniformWrite.dstBinding = 0;
-        VkDescriptorBufferInfo uniformBufferInfo{};
-        uniformBufferInfo.buffer = uniform;
-        uniformBufferInfo.offset = i * uniformSize;
-        uniformBufferInfo.range = uniformSize;
-        uniformWrite.pBufferInfo = &uniformBufferInfo;
-        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &uniformWrite, 0, nullptr);
-
-        VkWriteDescriptorSet textureWrite0{};
-        textureWrite0.descriptorCount = 1;
-        textureWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        textureWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        textureWrite0.dstArrayElement = 0;
-        textureWrite0.dstSet = uniformSet[i];
-        textureWrite0.dstBinding = 1;
-        VkDescriptorImageInfo textureImage0Info{};
-        textureImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        textureImage0Info.imageView = testImageView;
-        textureImage0Info.sampler = standSampler;
-        textureWrite0.pImageInfo = &textureImage0Info;
-        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &textureWrite0, 0, nullptr);
-
-        VkWriteDescriptorSet pbrTexWrite0{};
-        pbrTexWrite0.descriptorCount = 1;
-        pbrTexWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pbrTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        pbrTexWrite0.dstArrayElement = 0;
-        pbrTexWrite0.dstSet = uniformSet[i];
-        pbrTexWrite0.dstBinding = 2;
-        VkDescriptorImageInfo pbrTexImage0Info{};
-        pbrTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        pbrTexImage0Info.imageView = testImageView;
-        pbrTexImage0Info.sampler = standSampler;
-        pbrTexWrite0.pImageInfo = &pbrTexImage0Info;
-        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &pbrTexWrite0, 0, nullptr);
-
-        VkWriteDescriptorSet skyTexWrite0{};
-        skyTexWrite0.descriptorCount = 1;
-        skyTexWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        skyTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        skyTexWrite0.dstArrayElement = 0;
-        skyTexWrite0.dstSet = uniformSet[i];
-        skyTexWrite0.dstBinding = 3;
-        VkDescriptorImageInfo skyTexImage0Info{};
-        skyTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        skyTexImage0Info.imageView = skyImageView;
-        skyTexImage0Info.sampler = standSampler;
-        skyTexWrite0.pImageInfo = &skyTexImage0Info;
-        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &skyTexWrite0, 0, nullptr);
-    }
+    albedoView = testAlbedo.view;
+    PBRView = testPBR.view;
+    normalView = testNormal.view;
+    skyView = skyCubemap.view;
+    updateUniforms(true, 0);
 }
 
 void Render::buildSkyPipeline() {
@@ -884,7 +1085,7 @@ void Render::buildSkyPipeline() {
     setLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     setLayoutInfo.bindingCount = 4;
     VkDescriptorSetLayoutBinding uniBinding{};
-    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     uniBinding.binding = 0;
     uniBinding.descriptorCount = 1;
     uniBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1004,7 +1205,161 @@ void Render::buildSkyPipeline() {
     pipelineCreateInfo.pStages = shaderStage;
     pipelineCreateInfo.stageCount = 2;
 
-    VK(devFuncs->vkCreateGraphicsPipelines(window->device(), VK_NULL_HANDLE, 1, &pipelineCreateInfo, VDFT, &skyBoxPipeline));
+    VK(devFuncs->vkCreateGraphicsPipelines(window->device(), VK_NULL_HANDLE, 1, &pipelineCreateInfo, VDFT,
+                                           &skyBoxPipeline));
+}
+
+void Render::buildShadowPipeline() {
+    VkPipelineLayoutCreateInfo layoutCreateInfo{};
+    layoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutCreateInfo.setLayoutCount = 1;
+
+    VkDescriptorSetLayoutCreateInfo setLayoutInfo{};
+    setLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    setLayoutInfo.bindingCount = 4;
+    VkDescriptorSetLayoutBinding uniBinding{};
+    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    uniBinding.binding = 0;
+    uniBinding.descriptorCount = 1;
+    uniBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding texBinding0{};  // 反射率贴图
+    texBinding0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    texBinding0.binding = 1;
+    texBinding0.descriptorCount = 1;
+    texBinding0.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding pbrBinding{};  // PBR纹理
+    pbrBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pbrBinding.binding = 2;
+    pbrBinding.descriptorCount = 1;
+    pbrBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding skyBinding{};
+    skyBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    skyBinding.binding = 3;
+    skyBinding.descriptorCount = 1;
+    skyBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutBinding bindings[] = { uniBinding, texBinding0, pbrBinding, skyBinding };
+
+    setLayoutInfo.pBindings = bindings;
+    VkDescriptorSetLayout setLayout;
+    VK(devFuncs->vkCreateDescriptorSetLayout(window->device(), &setLayoutInfo, VDFT, &setLayout));
+
+    layoutCreateInfo.pSetLayouts = &setLayout;
+    VK(devFuncs->vkCreatePipelineLayout(window->device(), &layoutCreateInfo, VDFT, &shadowPipelineLayout));
+
+    VkGraphicsPipelineCreateInfo pipelineCreateInfo{};
+    pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineCreateInfo.layout = shadowPipelineLayout;
+    pipelineCreateInfo.subpass = 0;
+    pipelineCreateInfo.renderPass = shadowPass;
+
+    VkPipelineColorBlendStateCreateInfo colorBlend{};
+    colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlend.attachmentCount = 0;
+
+    /* VkPipelineColorBlendAttachmentState colorAttachment{};
+    colorAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorAttachment.blendEnable = VK_FALSE;
+    colorAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    colorBlend.pAttachments = &colorAttachment; */
+    pipelineCreateInfo.pColorBlendState = &colorBlend;
+
+    VkPipelineDepthStencilStateCreateInfo depthInfo{};
+    depthInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthInfo.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthInfo.depthTestEnable = VK_TRUE;
+    depthInfo.depthWriteEnable = VK_TRUE;
+    depthInfo.depthBoundsTestEnable = VK_FALSE;
+    depthInfo.maxDepthBounds = 1.0f;
+    depthInfo.minDepthBounds = 0.0f;
+    depthInfo.stencilTestEnable = VK_FALSE;
+    pipelineCreateInfo.pDepthStencilState = &depthInfo;
+
+    VkPipelineDynamicStateCreateInfo dynamicInfo{};
+    dynamicInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicInfo.dynamicStateCount = 1;
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    dynamicInfo.pDynamicStates = dynamicStates;
+    pipelineCreateInfo.pDynamicState = &dynamicInfo;
+
+    VkPipelineInputAssemblyStateCreateInfo inputInfo{};
+    inputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputInfo.primitiveRestartEnable = VK_TRUE;
+    inputInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+    pipelineCreateInfo.pInputAssemblyState = &inputInfo;
+
+    VkPipelineMultisampleStateCreateInfo aaInfo{};
+    VkSampleMask aaMasks = ~0x0;
+    aaInfo.pSampleMask = &aaMasks;
+    aaInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    aaInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    pipelineCreateInfo.pMultisampleState = &aaInfo;
+
+    VkPipelineRasterizationStateCreateInfo rasterization{};
+    rasterization.cullMode = VK_CULL_MODE_NONE;
+    rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    pipelineCreateInfo.pRasterizationState = &rasterization;
+
+    VkPipelineVertexInputStateCreateInfo vertexInfo{};
+    vertexInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInfo.vertexAttributeDescriptionCount = Model::VERTEX_INPUT_COUNT + Model::INSTANCE_INPUT_COUNT;
+    VkVertexInputAttributeDescription descriptions[Model::VERTEX_INPUT_COUNT + Model::INSTANCE_INPUT_COUNT];
+    Model::vertexInputAttributeDescription(descriptions);
+    Model::instanceInputAttributeDescription(descriptions + Model::VERTEX_INPUT_COUNT);
+    vertexInfo.pVertexAttributeDescriptions = descriptions;
+
+    VkVertexInputBindingDescription vertexBindingDescription{};
+    Model::vertexInputBindingDescription(vertexBindingDescription);
+    VkVertexInputBindingDescription instanceBindingDescription{};
+    Model::instanceInputBindingDescription(instanceBindingDescription);
+    VkVertexInputBindingDescription vBindings[] = { vertexBindingDescription, instanceBindingDescription };
+    vertexInfo.pVertexBindingDescriptions = vBindings;
+    vertexInfo.vertexBindingDescriptionCount = 2;
+    pipelineCreateInfo.pVertexInputState = &vertexInfo;
+
+    VkPipelineShaderStageCreateInfo shaderStage[2]{};
+    shaderStage[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStage[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStage[0].module = shadowVertexShader;
+    shaderStage[0].pName = "main";
+    shaderStage[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStage[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStage[1].module = shadowFragmentShader;
+    shaderStage[1].pName = "main";
+
+    pipelineCreateInfo.pStages = shaderStage;
+    pipelineCreateInfo.stageCount = 2;
+
+    VkViewport viewport{};
+    viewport.height = SHADOW_SIZE;
+    viewport.width = SHADOW_SIZE;
+    viewport.x = 0;
+    viewport.y = 0;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissors{};
+    scissors.offset = { 0, 0 };
+    scissors.extent = { SHADOW_SIZE, SHADOW_SIZE };
+
+    VkPipelineViewportStateCreateInfo viewportInfo{};
+    viewportInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportInfo.pViewports = &viewport;
+    viewportInfo.viewportCount = 1;
+    viewportInfo.pScissors = &scissors;
+    viewportInfo.scissorCount = 1;
+
+    pipelineCreateInfo.pViewportState = &viewportInfo;
+
+    VK(devFuncs->vkCreateGraphicsPipelines(window->device(), VK_NULL_HANDLE, 1, &pipelineCreateInfo, VDFT,
+                                           &shadowPipeline));
 }
 
 void Render::loadShader() {
@@ -1024,7 +1379,8 @@ void Render::loadShader() {
     QByteArray fragCode = fragFile0.readAll();
     fragmentShaderModuleCreateInfo.codeSize = fragCode.size();
     fragmentShaderModuleCreateInfo.pCode = reinterpret_cast<uint32_t*>(fragCode.data());
-    VK(devFuncs->vkCreateShaderModule(window->device(), &fragmentShaderModuleCreateInfo, VDFT, &standardFragmentShader));
+    VK(devFuncs->vkCreateShaderModule(window->device(), &fragmentShaderModuleCreateInfo, VDFT,
+                                      &standardFragmentShader));
 
     QFile envVF(":/assets/shaders/env.vert.spv");
     envVF.open(QFile::ReadOnly);
@@ -1043,42 +1399,73 @@ void Render::loadShader() {
     envFragmentCreateInfo.codeSize = envFCode.size();
     envFragmentCreateInfo.pCode = reinterpret_cast<uint32_t*>(envFCode.data());
     VK(devFuncs->vkCreateShaderModule(window->device(), &envFragmentCreateInfo, VDFT, &skyFragmentShader));
+
+    QFile sdVF(":/assets/shaders/shadow.vert.spv");
+    sdVF.open(QFile::ReadOnly);
+    VkShaderModuleCreateInfo sdVertexCreateInfo{};
+    sdVertexCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    QByteArray sdVCode = sdVF.readAll();
+    sdVertexCreateInfo.codeSize = sdVCode.size();
+    sdVertexCreateInfo.pCode = reinterpret_cast<uint32_t*>(sdVCode.data());
+    VK(devFuncs->vkCreateShaderModule(window->device(), &sdVertexCreateInfo, VDFT, &shadowVertexShader));
+
+    QFile sdFF(":/assets/shaders/shadow.frag.spv");
+    sdFF.open(QFile::ReadOnly);
+    VkShaderModuleCreateInfo sdFragmentCreateInfo{};
+    sdFragmentCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    QByteArray sdFCode = sdFF.readAll();
+    sdFragmentCreateInfo.codeSize = sdFCode.size();
+    sdFragmentCreateInfo.pCode = reinterpret_cast<uint32_t*>(sdFCode.data());
+    VK(devFuncs->vkCreateShaderModule(window->device(), &sdFragmentCreateInfo, VDFT, &shadowFragmentShader));
 }
 
 void Render::createBasicRenderPass() {
     VkRenderPassCreateInfo passCreateInfo{};
     passCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     VkAttachmentDescription attachmentDescription{};
-    attachmentDescription.format = window->colorFormat();
-    attachmentDescription.samples = VK_SAMPLE_COUNT_4_BIT;
+    attachmentDescription.format = SHADOW_FORMAT;
+    attachmentDescription.samples = VK_SAMPLE_COUNT_1_BIT;
     attachmentDescription.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachmentDescription.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     attachmentDescription.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachmentDescription.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachmentDescription.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachmentDescription.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachmentDescription.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     passCreateInfo.attachmentCount = 1;
     passCreateInfo.pAttachments = &attachmentDescription;
+
     VkSubpassDescription basicSubpassDescription{};
     basicSubpassDescription.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    VkAttachmentReference colorReference{};
-    colorReference.attachment = 0;
-    colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    basicSubpassDescription.colorAttachmentCount = 1;
-    basicSubpassDescription.pColorAttachments = &colorReference;
+    basicSubpassDescription.colorAttachmentCount = 0;
+
+    VkAttachmentReference depthReference{};
+    depthReference.attachment = 0;
+    depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+    basicSubpassDescription.pDepthStencilAttachment = &depthReference;
+
+    VkSubpassDependency dependencies[2]{};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    passCreateInfo.pDependencies = dependencies; // For multi subpass
+
     passCreateInfo.subpassCount = 1;
     passCreateInfo.pSubpasses = &basicSubpassDescription;
-    passCreateInfo.dependencyCount = 1; // For multi subpass
-    VkSubpassDependency dependency{};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    passCreateInfo.pDependencies = &dependency; // For multi subpass
+    passCreateInfo.dependencyCount = 2; // For multi subpass
 
-    VK(devFuncs->vkCreateRenderPass(window->device(), &passCreateInfo, VDFT, &basicPass));
+    VK(devFuncs->vkCreateRenderPass(window->device(), &passCreateInfo, VDFT, &shadowPass));
 }
 
 void Render::createSampler() {
@@ -1099,12 +1486,25 @@ void Render::createSampler() {
     createInfo.mipLodBias = 0.0f;
     createInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     createInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-
     VK(devFuncs->vkCreateSampler(window->device(), &createInfo, VDFT, &standSampler));
+
+    createInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    createInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    createInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    createInfo.anisotropyEnable = VK_FALSE;
+    createInfo.maxAnisotropy = 1.0f;
+    createInfo.maxLod = 0.0f;
+    createInfo.minLod = 0.0;
+    createInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    createInfo.magFilter = VK_FILTER_NEAREST;
+    createInfo.minFilter = VK_FILTER_NEAREST;
+    createInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    VK(devFuncs->vkCreateSampler(window->device(), &createInfo, VDFT, &shadowSampler));
+
 }
 
-void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, uint32_t mipsLevel, VkImageView& view,
-                             uint32_t layer, uint32_t layerCount) {
+void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, uint32_t mipsLevel,
+                             VkImageView& view, uint32_t layer, uint32_t layerCount) {
     VkImageViewCreateInfo viewInfo{};
     viewInfo.image = image;
     viewInfo.viewType = layerCount > 1 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
@@ -1116,6 +1516,128 @@ void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat 
     viewInfo.subresourceRange.layerCount = layerCount;
     viewInfo.subresourceRange.levelCount = mipsLevel;
     VK(devFuncs->vkCreateImageView(window->device(), &viewInfo, VDFT, &view));
+}
+
+void Render::updateUniforms(bool all, int id) {
+    for (int i = 0; i < window->concurrentFrameCount(); i++) {
+        if (!all && id != i) { continue; }
+        VkWriteDescriptorSet uniformWrite{};
+        uniformWrite.descriptorCount = 1;
+        uniformWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        uniformWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        uniformWrite.dstArrayElement = 0;
+        uniformWrite.dstSet = uniformSet[i];
+        uniformWrite.dstBinding = 0;
+        VkDescriptorBufferInfo uniformBufferInfo{};
+        uniformBufferInfo.buffer = uniform.buffer;
+        uniformBufferInfo.offset = i * uniformSize;
+        uniformBufferInfo.range = uniformSize;
+        uniformWrite.pBufferInfo = &uniformBufferInfo;
+        if (all) {
+            devFuncs->vkUpdateDescriptorSets(window->device(), 1, &uniformWrite, 0, nullptr);
+        }
+
+        VkWriteDescriptorSet textureWrite0{};
+        textureWrite0.descriptorCount = 1;
+        textureWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        textureWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        textureWrite0.dstArrayElement = 0;
+        textureWrite0.dstSet = uniformSet[i];
+        textureWrite0.dstBinding = 1;
+        VkDescriptorImageInfo textureImage0Info{};
+        textureImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        textureImage0Info.imageView = albedoView;
+        textureImage0Info.sampler = standSampler;
+        textureWrite0.pImageInfo = &textureImage0Info;
+        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &textureWrite0, 0, nullptr);
+
+        VkWriteDescriptorSet pbrTexWrite0{};
+        pbrTexWrite0.descriptorCount = 1;
+        pbrTexWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        pbrTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        pbrTexWrite0.dstArrayElement = 0;
+        pbrTexWrite0.dstSet = uniformSet[i];
+        pbrTexWrite0.dstBinding = 2;
+        VkDescriptorImageInfo pbrTexImage0Info{};
+        pbrTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        pbrTexImage0Info.imageView = PBRView;
+        pbrTexImage0Info.sampler = standSampler;
+        pbrTexWrite0.pImageInfo = &pbrTexImage0Info;
+        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &pbrTexWrite0, 0, nullptr);
+
+        VkWriteDescriptorSet skyTexWrite0{};
+        skyTexWrite0.descriptorCount = 1;
+        skyTexWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        skyTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        skyTexWrite0.dstArrayElement = 0;
+        skyTexWrite0.dstSet = uniformSet[i];
+        skyTexWrite0.dstBinding = 3;
+        VkDescriptorImageInfo skyTexImage0Info{};
+        skyTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        skyTexImage0Info.imageView = skyView;
+        skyTexImage0Info.sampler = standSampler;
+        skyTexWrite0.pImageInfo = &skyTexImage0Info;
+        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &skyTexWrite0, 0, nullptr);
+
+        VkWriteDescriptorSet normalTexWrite0{};
+        normalTexWrite0.descriptorCount = 1;
+        normalTexWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        normalTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        normalTexWrite0.dstArrayElement = 0;
+        normalTexWrite0.dstSet = uniformSet[i];
+        normalTexWrite0.dstBinding = 4;
+        VkDescriptorImageInfo normalTexImage0Info{};
+        normalTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalTexImage0Info.imageView = normalView;
+        normalTexImage0Info.sampler = standSampler;
+        normalTexWrite0.pImageInfo = &normalTexImage0Info;
+        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &normalTexWrite0, 0, nullptr);
+
+        VkWriteDescriptorSet shadowWrite0{};
+        shadowWrite0.descriptorCount = 1;
+        shadowWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        shadowWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        shadowWrite0.dstArrayElement = 0;
+        shadowWrite0.dstSet = uniformSet[i];
+        shadowWrite0.dstBinding = 5;
+        VkDescriptorImageInfo shadowImage0Info{};
+        shadowImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shadowImage0Info.imageView = shadowMap[0].view;
+        shadowImage0Info.sampler = shadowSampler;
+        shadowWrite0.pImageInfo = &shadowImage0Info;
+        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &shadowWrite0, 0, nullptr);
+    }
+}
+
+void Render::drawObjects(VkCommandBuffer& cmdBuf) {
+    VkDeviceSize offsets[] = { 0 };
+    VkDeviceSize instanceOffsets[] = { 0 };
+    uint32_t dynamicBinding[] = { 0 };
+    // ################### draw objects #####################################################
+    albedoView = testAlbedo.view; PBRView = testPBR.view; normalView = testNormal.view;
+    // albedoView = shadowMap[0].view;
+    updateUniforms(false, window->currentFrame());
+    devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, standardPipelineLayout, 0, 1,
+                                      &uniformSet[window->currentFrame()], 1, dynamicBinding);
+
+    devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &terrainVertex.buffer, offsets);
+    devFuncs->vkCmdBindIndexBuffer(cmdBuf, terrainIndex.buffer, 0, IndexType);
+
+    devFuncs->vkCmdBindVertexBuffers(cmdBuf, 1, 1, &testInstance.buffer, instanceOffsets);
+    devFuncs->vkCmdDrawIndexed(cmdBuf, terrainIndex.count, testInstance.count, 0, 0, 0);
+
+    for (uint32_t i = 0; i < PLANT_TYPE_NUM; i++) {
+        albedoView = plantsAlbedo[i].view; PBRView = plantsPBR[i].view; normalView = plantsNormal[i].view;
+        updateUniforms(false, window->currentFrame());
+        devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, standardPipelineLayout, 0, 1,
+                                          &uniformSet[window->currentFrame()], 1, dynamicBinding);
+
+        devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &plantsVertex[i].buffer, offsets);
+        devFuncs->vkCmdBindIndexBuffer(cmdBuf, plantsIndex[i].buffer, 0, IndexType);
+
+        devFuncs->vkCmdBindVertexBuffers(cmdBuf, 1, 1, &plantsInstance[i].buffer, instanceOffsets);
+        devFuncs->vkCmdDrawIndexed(cmdBuf, plantsIndex[i].count, plantsInstance[i].count, 0, 0, 0);
+    }
 }
 
 void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint32_t layer) {
@@ -1146,8 +1668,8 @@ void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint
     makeImageAllLevelToDst.subresourceRange.levelCount = mipsLevel;
     makeImageAllLevelToDst.subresourceRange.layerCount = 1;
     makeImageAllLevelToDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
-                                   1, &makeImageAllLevelToDst);
+    devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                                   nullptr, 0, nullptr, 1, &makeImageAllLevelToDst);
 
     VkOffset2D mipSize = { static_cast<int32_t>(size.width), static_cast<int32_t>(size.height) };
     for (uint32_t i = 1; i <= mipsLevel; i++) {
@@ -1166,8 +1688,8 @@ void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint
         makeImageIndexIm1ToSrc.subresourceRange.baseMipLevel = level - 1;
         makeImageIndexIm1ToSrc.subresourceRange.layerCount = 1;
         makeImageIndexIm1ToSrc.subresourceRange.levelCount = 1;
-        devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
-                                       1, &makeImageIndexIm1ToSrc);
+        devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                                       nullptr, 0, nullptr, 1, &makeImageIndexIm1ToSrc);
 
         VkImageBlit blit{};
         blit.srcOffsets[0] = { 0, 0, 0 };
@@ -1183,8 +1705,8 @@ void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint
         blit.dstSubresource.baseArrayLayer = layer;
         blit.dstSubresource.layerCount = 1;
         blit.dstSubresource.mipLevel = level;
-        devFuncs->vkCmdBlitImage(cmdBuf, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                 1, &blit, VK_FILTER_LINEAR);
+        devFuncs->vkCmdBlitImage(cmdBuf, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
 
         VkImageMemoryBarrier makeImageIndexIm1ToShader{};
         makeImageIndexIm1ToShader.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1200,8 +1722,8 @@ void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint
         makeImageIndexIm1ToShader.subresourceRange.baseMipLevel = level - 1;
         makeImageIndexIm1ToShader.subresourceRange.levelCount = 1;
         makeImageIndexIm1ToShader.subresourceRange.layerCount = 1;
-        devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
-                                       1, &makeImageIndexIm1ToShader);
+        devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0,
+                                       0, nullptr, 0, nullptr, 1, &makeImageIndexIm1ToShader);
     }
 
     devFuncs->vkEndCommandBuffer(cmdBuf);
@@ -1215,6 +1737,130 @@ void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint
     devFuncs->vkQueueWaitIdle(window->graphicsQueue());
 
     devFuncs->vkFreeCommandBuffers(window->device(), window->graphicsCommandPool(), 1, &cmdBuf);
+}
+
+void Render::loadImage(Texture2D& texture, const char* path, bool srgb, VkExtent2D csize) {
+    VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    QImage file(path);
+    file = file.convertToFormat(QImage::Format_RGBA8888);
+    VkExtent2D size = { U32(file.width()), U32(file.height()) };
+    uint32_t miplevel = MIP(size.width, size.height);
+    createImage(size, miplevel, format, notuse, texture.image, VK_IMAGE_USAGE_SAMPLED_BIT |
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT, texture.memory, texture.requirement, 0, 1, false, csize);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 1);
+    fillImage(file.sizeInBytes(), size, miplevel, file.bits(), texture, { 0, 0 }, 0, false);
+    genMipmaps(texture.image, size, miplevel, 0);
+}
+
+void Render::loadCubemap(Texture2D& texture, const char* path[6], bool srgb) {
+    VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    QImage files[6];
+    VkExtent2D size = { 0, 0 };
+    uint32_t miplevel = 0;
+    for (size_t i = 0; i < 6; i++) {
+        files[i].load(path[i]);
+        files[i] = files[i].convertToFormat(QImage::Format_RGBA8888);
+        if (i == 0) {
+            size = { U32(files[i].width()), U32(files[i].height()) };
+            miplevel = MIP(size.width, size.height);
+        }
+        if (size.width != U32(files[i].width()) || size.height != U32(files[i].height()) ||
+            files[i].width() != files[i].height()) {
+            perror("Cubemap image must have same size as each other and same width and height.\n");
+            exit(-1);
+        }
+    }
+    createImage(size, miplevel, format, notuse, texture.image, VK_IMAGE_USAGE_SAMPLED_BIT |
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT, texture.memory, texture.requirement,
+                VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6, false);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 6);
+    for (size_t i = 0; i < 6; i++) {
+        fillImage(files[i].sizeInBytes(), size, miplevel, files[i].bits(), texture, { 0, 0 }, i, i != 0);
+        genMipmaps(texture.image, size, miplevel, i);
+    }
+}
+
+void Render::loadVertex(IBuffer& buffer, uint32_t size) {
+    createBuffer(size, buffer.data, buffer.buffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT, buffer.memory, buffer.requirement, false);
+}
+
+void Render::loadIndex(IBuffer& buffer, uint32_t size) {
+    createBuffer(size, buffer.data, buffer.buffer, VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT, buffer.memory, buffer.requirement, false);
+}
+
+void Render::loadInstance(IBuffer& buffer, uint32_t size) {
+    createBuffer(size, buffer.data, buffer.buffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                 buffer.memory, buffer.requirement, true);
+}
+
+void Render::loadUniform(IBuffer& buffer, uint32_t size) {
+    createBuffer(size, buffer.data, buffer.buffer, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+                 buffer.memory, buffer.requirement, true);
+}
+
+void Render::fillLocalData(IBuffer& buffer, const void* data, uint32_t size, VkDeviceSize offset) {
+    memcpy_s(static_cast<uint8_t*>(buffer.data) + offset, size, data, size);
+    VkMappedMemoryRange range{};
+    range.memory = buffer.memory;
+    range.offset = offset;
+    range.size = size;
+    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    devFuncs->vkFlushMappedMemoryRanges(window->device(), 1, &range);
+}
+
+void Render::destroyBuffer(IBuffer buffer) {
+    devFuncs->vkUnmapMemory(window->device(), buffer.memory);
+    devFuncs->vkFreeMemory(window->device(), buffer.memory, VDFT);
+    devFuncs->vkDestroyBuffer(window->device(), buffer.buffer, VDFT);
+}
+
+void Render::destroyImage(Texture2D texture) {
+    devFuncs->vkUnmapMemory(window->device(), texture.memory);
+    devFuncs->vkDestroyImageView(window->device(), texture.view, VDFT);
+    devFuncs->vkFreeMemory(window->device(), texture.memory, VDFT);
+    devFuncs->vkDestroyImage(window->device(), texture.image, VDFT);
+}
+
+void Render::updateImage(const QImage& img, Texture2D& texture, bool srgb) {
+    devFuncs->vkDestroyImage(window->device(), texture.image, VDFT);
+    devFuncs->vkDestroyImageView(window->device(), texture.view, VDFT);
+    VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    VkExtent2D size = { U32(img.width()), U32(img.height()) };
+    uint32_t miplevel = MIP(size.width, size.height);
+    createImageOnly(size, miplevel, format, texture, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    0, 1, false);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 1);
+    fillImage(img.sizeInBytes(), size, miplevel, img.bits(), texture, { 0, 0 }, 0, false);
+    genMipmaps(texture.image, size, miplevel, 0);
+}
+
+void Render::updateCubeMap(const QImage* img, Texture2D& texture) {
+    devFuncs->vkDestroyImage(window->device(), texture.image, VDFT);
+    devFuncs->vkDestroyImageView(window->device(), texture.view, VDFT);
+    VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+    VkExtent2D size = { U32(img[0].width()), U32(img[0].height()) };
+    uint32_t miplevel = MIP(size.width, size.height);
+    createImageOnly(size, miplevel, format, texture, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6, false);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 6);
+    fillImage(img[0].sizeInBytes(), size, miplevel, img[0].bits(), texture, { 0, 0 }, 0, false);
+    fillImage(img[1].sizeInBytes(), size, miplevel, img[1].bits(), texture, { 0, 0 }, 1, true);
+    fillImage(img[2].sizeInBytes(), size, miplevel, img[2].bits(), texture, { 0, 0 }, 2, true);
+    fillImage(img[3].sizeInBytes(), size, miplevel, img[3].bits(), texture, { 0, 0 }, 3, true);
+    fillImage(img[4].sizeInBytes(), size, miplevel, img[4].bits(), texture, { 0, 0 }, 4, true);
+    fillImage(img[5].sizeInBytes(), size, miplevel, img[5].bits(), texture, { 0, 0 }, 5, true);
+    genMipmaps(texture.image, size, miplevel, 0);
+    genMipmaps(texture.image, size, miplevel, 1);
+    genMipmaps(texture.image, size, miplevel, 2);
+    genMipmaps(texture.image, size, miplevel, 3);
+    genMipmaps(texture.image, size, miplevel, 4);
+    genMipmaps(texture.image, size, miplevel, 5);
+}
+
+bool Render::ready() const {
+    return readyToRender;
 }
 
 ViewThread::ViewThread(SceneView* area, uint32_t delta): area(area), delta(delta) {

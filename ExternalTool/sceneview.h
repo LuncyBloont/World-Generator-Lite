@@ -12,11 +12,13 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QCursor>
+#include <mutex>
 #include <glm/glm/gtc/random.hpp>
 #include "datacontext.h"
 #include "model.h"
 #include "helperMacro.h"
 #include "camera.h"
+#include "renderstruct.h"
 
 #define MAX_HILL_VSIZE (800 * 800 * 4)
 #define MAX_PLANT_VSIZE (4096 * 4)
@@ -31,14 +33,26 @@
 #define MAX_IMAGE_HEIGHT 1024
 #define TEXEL_SIZE (sizeof(uint8_t) * 4)
 #define MAX_TMP_BUFFER_SIZE ((800 * 800 * 5 + 1) * VertexSize)
-#define MAX_TMP_IMAGE_SIZE (1024 * 1024 * sizeof(uint8_t) * 4 * 2)
+#define MAX_TMP_IMAGE_SIZE (2048 * 2048 * sizeof(uint8_t) * 4 * 2)
 #define MAX_PLANT_COUNT (1024 * 1024)
+#define U32(d) (static_cast<uint32_t>(d))
+#define MIP(w, h) (glm::floor(glm::log(glm::max(w, h)) / glm::log(2) + 0.5f))
+#define SRGB true
+#define LINEAR false
+
+#define SHADOW_SIZE 800
+#define SHADOW_FORMAT VK_FORMAT_D16_UNORM
+
+extern bool resetup;
+
+extern std::mutex renderLoopLock;
 
 struct SimplePBR {
-    float roughness = 0.1;    // 粗糙度
-    float specular = 0.5;     // 高光强度
-    float metallic = 0.05;     // 金属度
-    float contrast = 0.5;     // 反射率对比度
+    float roughness = 1.0;    // 粗糙度
+    float specular = 0.35;     // 高光强度
+    float metallic = 1.0;     // 金属度
+    float contrast = 1.0;     // 反射率对比度
+    float ss = 1.0f;
 };
 
 struct RenderDescription {
@@ -69,7 +83,7 @@ private:
 
 public:
     // 对接窗体系统的重载函数
-    Render(QVulkanWindow *w, const bool topView);
+    Render(QVulkanWindow *w, const bool topView, std::mutex* lock);
 
     void initResources() override;
     void initSwapChainResources() override;
@@ -77,6 +91,7 @@ public:
     void releaseResources() override;
     void logicalDeviceLost() override;
     void physicalDeviceLost() override;
+    void preInitResources() override;
 
     void startNextFrame() override;
 
@@ -87,41 +102,61 @@ public:
 
     void setPlant(const Vertexs& vs, const Indexs& index, uint32_t id);     // 设置指定id的植被数据
 
-    void setHillTexture(const QImage& image);                               // 设置地形纹理
-
-    void setPlantTexture(const QImage& image, uint32_t id);                 // 设置指定植被的纹理
-
-    void setShaderDescription(const RenderDescription* dsecription);        // 设置渲染相关配置
-
-    void setPlantTransform(const std::vector<Transform>& transforms, uint32_t id); // 设置指定id的植被分布
-
-    void setHillsType(const QImage& d0, const QImage& d1);                  // 设置地形类型
-
-    void setPlantsType(const QImage& d0, const QImage& d1);                 // 设置植被分布数据
-
 private:
     void createBuffer(uint32_t size, void*& data, VkBuffer& buffer, VkBufferUsageFlags usage,
                       VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, bool local);
 
     void createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, void*& data, VkImage& image, VkImageUsageFlags usage,
                      VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, VkImageCreateFlags flags,
-                     uint32_t layerCount, bool local);
+                     uint32_t layerCount, bool local, VkExtent2D size = { 0, 0 });
+
+    void createImageOnly(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, Texture2D& tex,
+                        VkImageUsageFlags usage, VkImageCreateFlags flags, uint32_t layerCount, bool local);
 
     void createMaxImage();
 
-    void fillBuffer(uint32_t size, const void* data, VkBuffer buffer, uint32_t offset);
+    void makeDepthBuffer(VkImage image);
+
     void fillBufferInit();
-    void fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, const void* data, VkImage image, VkOffset2D offset,
-                   uint32_t layer, bool protectOld);
     void fillImageInit();
     void buildPipeline();
     void buildSkyPipeline();
+    void buildShadowPipeline();
     void loadShader();
     void createBasicRenderPass();
     void createSampler();
     void createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, uint32_t mipsLevel, VkImageView& view,
                          uint32_t layer, uint32_t layerCount);
+
+    void updateUniforms(bool all, int id);
+
+    void drawObjects(VkCommandBuffer& cmdBuf);
+
+public:
+    VkImageView albedoView = VK_NULL_HANDLE;
+    VkImageView PBRView = VK_NULL_HANDLE;
+    VkImageView normalView = VK_NULL_HANDLE;
+    VkImageView skyView = VK_NULL_HANDLE;
+
+    void loadImage(Texture2D& texture, const char* path, bool srgb, VkExtent2D csize = { 0, 0 });
+    void loadCubemap(Texture2D& texture, const char* path[6], bool srgb);
+    void loadVertex(IBuffer& buffer, uint32_t size);
+    void loadIndex(IBuffer& buffer, uint32_t size);
+    void loadInstance(IBuffer& buffer, uint32_t size);
+    void loadUniform(IBuffer& buffer, uint32_t size);
+    void fillLocalData(IBuffer& buffer, const void* data, uint32_t size, VkDeviceSize offset);
+    void fillBuffer(uint32_t size, const void* data, IBuffer buffer, VkDeviceSize offset);
+    void fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, const void* data, Texture2D image, VkOffset2D offset,
+                   uint32_t layer, bool protectOld);
     void genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint32_t layer);
+
+    void destroyBuffer(IBuffer buffer);
+    void destroyImage(Texture2D texture);
+
+    void updateImage(const QImage& img, Texture2D& texture, bool srgb);
+    void updateCubeMap(const QImage* img, Texture2D& texture);
+
+    bool ready() const;
 
 private:
     const bool topView;
@@ -131,37 +166,43 @@ private:
     float green = 0;
     void* notuse;
 
-    VkBuffer hillVertexBuffer;
-    uint32_t hillVsCount = 0;
-    VkBuffer plantsVertexBuffers[PLANT_TYPE_NUM];
-    uint32_t plantsVsCount[PLANT_TYPE_NUM] = { 0 };
-    // Vertexs buffers and sizes;
+    bool readyToRender = false;
 
-    VkBuffer hillIndexBuffer;
-    uint32_t hillIndexCount;
-    VkBuffer plantsIndexBuffers[PLANT_TYPE_NUM];
-    uint32_t plantIndexCounts[PLANT_TYPE_NUM];
+public:
 
-    VkDeviceMemory hillMemory;
-    VkMemoryRequirements hillMemoryRequirement;
-    void* hillVData;
-    VkDeviceMemory plantsMemories[PLANT_TYPE_NUM];
-    VkMemoryRequirements plantsMemoriesRequirements[PLANT_TYPE_NUM];
-    void* plantsVData[PLANT_TYPE_NUM];
-    // Device memories and memory mappings;
+    IBuffer terrainVertex;
+    IBuffer terrainIndex;
 
-    VkDeviceMemory hillIndexMemory;
-    VkMemoryRequirements hillIndexMemoryRequirement;
-    void* hillIndexData;
-    VkDeviceMemory plantsIndexMemories[PLANT_TYPE_NUM];
-    VkMemoryRequirements plantsIndexMemoryRequirements[PLANT_TYPE_NUM];
-    void* plantsIndexDatas[PLANT_TYPE_NUM];
+    IBuffer plantsVertex[PLANT_TYPE_NUM];
+    IBuffer plantsIndex[PLANT_TYPE_NUM];
+    // Vertexs and index buffers;
 
-    VkBuffer skyVertexBuffer;
-    VkDeviceMemory skyVertexMemory;
-    VkMemoryRequirements skyVertexMemoryRequirement;
-    void* skyVertexData;
-    uint32_t skyVertexCount;
+    IBuffer terrainInstance;
+    IBuffer plantsInstance[PLANT_TYPE_NUM];
+
+    IBuffer testInstance;
+
+    IBuffer skyVertex;
+
+    IBuffer uniform;
+
+    Texture2D terrainAlbedo;
+    Texture2D terrainPBR;
+    Texture2D terrainNormal;
+    Texture2D plantsAlbedo[PLANT_TYPE_NUM];
+    Texture2D plantsNormal[PLANT_TYPE_NUM];
+    Texture2D plantsPBR[PLANT_TYPE_NUM];
+
+    Texture2D testAlbedo;
+    Texture2D testPBR;
+    Texture2D testNormal;
+
+    Texture2D skyCubemap;
+
+private:
+
+    Texture2D shadowMap[4];
+    VkFramebuffer shadowFrameBuffer[4];
 
     VkPipeline standardPipeline = VK_NULL_HANDLE;
     VkPipelineLayout standardPipelineLayout = VK_NULL_HANDLE;
@@ -174,8 +215,6 @@ private:
     // Graphics pipelines;
 
     VkRenderPass shadowPass;
-
-    VkRenderPass basicPass; // unuse
     // Render Pass;
 
     VkShaderModule standardVertexShader;
@@ -186,13 +225,11 @@ private:
     VkShaderModule shadowFragmentShader;
     // Shaders;
 
-    Vertexs monkey;
-    Indexs monkeyIndex;
+    Vertexs monkeyModel;
+    Indexs monkeyModelIndex;
+    Vertexs plantsModel[PLANT_TYPE_NUM];
+    Indexs plantsModelIndex[PLANT_TYPE_NUM];
 
-    VkBuffer uniform;
-    VkDeviceMemory uniformMemory;
-    VkMemoryRequirements unigormMemoryRequirement;
-    void* uniformData;
     VkDescriptorSetLayout uniformSetLayout;
     VkDescriptorPool uniformPool;
     VkDescriptorSet* uniformSet = nullptr;
@@ -201,48 +238,8 @@ private:
     VkImage maxTexture;
     VkImage maxCubeTexture;
 
-    VkImage hillTexture;
-    VkImage hillNormal;
-    VkImage hillPBR;
-    VkImage plantsTextures[PLANT_TYPE_NUM];
-    VkImage plantsNormal[PLANT_TYPE_NUM];
-    VkImage plantsPBR[PLANT_TYPE_NUM];
-
-    VkImage testImage;
-    VkImageView testImageView;
     VkSampler standSampler;
-    VkDeviceMemory testIMemory;
-    VkMemoryRequirements testIMemoryRequirement;
-    void* testImageData;
-
-    VkDeviceMemory hillTMemory;
-    VkDeviceMemory hillNormalMemory;
-    VkDeviceMemory hillPBRMemory;
-
-    VkDeviceMemory plantsTexturesMemory[PLANT_TYPE_NUM];
-    VkDeviceMemory plantsNormalMemory[PLANT_TYPE_NUM];
-    VkDeviceMemory plantsPBRMemory[PLANT_TYPE_NUM];
-
-    VkMemoryRequirements hillTMemoryRequirement;
-    VkMemoryRequirements hillNormalMemoryRequirement;
-    VkMemoryRequirements hillPBRMemoryRequirement;
-
-    VkMemoryRequirements plantsTexturesMemoryRequirements[PLANT_TYPE_NUM];
-    VkMemoryRequirements plantsNormalMemoryRequirement[PLANT_TYPE_NUM];
-    VkMemoryRequirements plantsPBRMemoryRequirement[PLANT_TYPE_NUM];
-
-    VkImage skyImage;
-    VkDeviceMemory skyMemory;
-    VkMemoryRequirements skyMemoryRequirement;
-    VkImageView skyImageView;
-
-    void* hillTData;
-    void* hillNormalData;
-    void* hillPBRData;
-
-    void* plantsTexturesDatas[PLANT_TYPE_NUM];
-    void* plantsNormalData[PLANT_TYPE_NUM];
-    void* plantsPBRData[PLANT_TYPE_NUM];
+    VkSampler shadowSampler;
 
     VkBuffer tmpBuffer;
     VkDeviceMemory tmpBufferMemory;
@@ -251,20 +248,11 @@ private:
     VkDeviceMemory tmpImageMemory;
     VkMemoryRequirements tmpImageRequirement;
 
-    VkBuffer testInstanceBuffer;
-    VkDeviceMemory testInstanceMemory;
-    VkMemoryRequirements testInstanceMemoryRequirement;
-    void* testInstanceData;
-    uint32_t testInstanceCount;
-
-    VkBuffer plantsInstanceBuffer[MAX_PLANT_COUNT];
-    VkDeviceMemory plantsInstanceMemory[MAX_PLANT_COUNT];
-    VkMemoryRequirements plantsInstanceMemoryRequirement[MAX_PLANT_COUNT];
-    void* plantsInstanceData[MAX_PLANT_COUNT];
-    uint32_t plantsInstanceCount[MAX_PLANT_COUNT];
+    std::mutex* lock;
 
 public:
-    SimplePBR testPBR;
+    SimplePBR testPBRInfo;
+    SimplePBR testPBRBase = { 0.0f, 0.0f, 0.0f, 0.0f };
     float renderType = 0.0f;
 
     Camera camera;
@@ -274,11 +262,14 @@ public:
 struct Uniform {
     alignas(4) float time;
     alignas(4) float skyForce;
+    alignas(4) float subsurface;
+    alignas(4) float ssbase;
     alignas(8) glm::vec2 fog;
+    alignas(16) glm::vec3 fogColor;
     alignas(16) glm::vec4 resolution;
     alignas(16) glm::vec4 sun;
     alignas(16) glm::mat4 mvp;
-    alignas(16) glm::vec4 bprRSMC;
+    alignas(16) glm::vec4 pbrRSMC;
     alignas(16) glm::vec3 sunDir;
     alignas(16) glm::vec4 baseColor;
     alignas(16) glm::vec4 etc;
@@ -286,6 +277,9 @@ struct Uniform {
     alignas(16) glm::mat4 v;
     alignas(16) glm::mat4 p;
     alignas(16) glm::vec4 scale;
+    alignas(16) glm::vec4 pbrBase;
+    alignas(16) glm::mat4 shadowV;
+    alignas(8) glm::vec2 shadowBias;
 };
 
 class SceneView;
@@ -305,7 +299,7 @@ class SceneView : public QVulkanWindow {
 public:
     // 面向Qt的UI接口
 
-    explicit SceneView(QVulkanWindow *parent = nullptr, const DataContext* dataContext = nullptr,
+    explicit SceneView(std::mutex* lock, QVulkanWindow *parent = nullptr, const DataContext* dataContext = nullptr,
                        QVulkanInstance* instance = nullptr, const bool topView = false);
     ~SceneView();
 
@@ -317,6 +311,7 @@ public:
     // 面向WGL的接口
 
     Render* render;
+    Camera vcamera; // 虚拟相机，插值用
 
 signals:
     void updateSignal();
@@ -330,7 +325,7 @@ private:
     const bool topView;
     ViewThread thread;
 
-    Camera vcamera; // 虚拟相机，插值用
+    std::mutex* lock;
 };
 
 #endif // SCENEVIEW_H

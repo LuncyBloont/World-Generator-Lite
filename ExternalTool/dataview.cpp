@@ -1,22 +1,38 @@
 #include "dataview.h"
 #include "wglcore.h"
 
-DataView::DataView(std::string name, void* val, Type type, WGLCore* core, size_t listener):
+DataView::DataView(std::string name, void* val, void* minv, void* maxv, Type type, WGLCore* core, size_t listener):
     type(type), name(name), context(nullptr), core(core), listener(listener) {
     value = new uint8_t[type.size];
+    min = new uint8_t[type.size];
+    max = new uint8_t[type.size];
     if (val) { memcpy(value, val, type.size); }
     else { memset(value, 0, type.size); }
+    if (minv) { memcpy(min, minv, type.size); }
+    else { memset(min, 0, type.size); }
+    if (maxv) { memcpy(max, maxv, type.size); }
+    else { memset(max, 0, type.size); }
 }
 
 const void* DataView::get() const {
     return value;
 }
 
-void DataView::set(const void* val) {
+const void* DataView::getMin() const {
+    return min;
+}
+
+const void* DataView::getMax() const {
+    return max;
+}
+
+void DataView::set(const void* val, bool call) {
     memcpy(value, val, type.size);
-    change = true;
-    core->wake(listener);
-    core->unGen = true;
+    if (call) {
+        change = true;
+        core->wake(listener);
+        core->unGen = true;
+    }
 }
 
 const std::string& DataView::getName() const {
@@ -85,7 +101,7 @@ void DataView::makeEnum(DataView* dataview, const std::vector<std::string>& ss) 
     for (size_t i = 0; i < ss.size(); i++) {
         DataView::setEnumString(buf.data(), ss[i].data(), i);
     }
-    dataview->set(buf.data());
+    dataview->set(buf.data(), false);
 }
 
 Type::Type(Name tname) {

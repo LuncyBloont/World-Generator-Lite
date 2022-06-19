@@ -16,7 +16,9 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     model.cpp \
+    renderstruct.cpp \
     sceneview.cpp \
+    sw_plantsworker.cpp \
     sw_renderworker.cpp \
     sw_terrainworker.cpp \
     ui.cpp \
@@ -30,7 +32,9 @@ HEADERS += \
     job.h \
     mainwindow.h \
     model.h \
+    renderstruct.h \
     sceneview.h \
+    sw_plantsworker.h \
     sw_renderworker.h \
     sw_terrainworker.h \
     ui.h \

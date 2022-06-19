@@ -8,7 +8,10 @@ layout(location = 0) in vec2 uv;
 layout(binding = 0) uniform Uni {
     float time;
     float skyForce;
+    float subsurface;
+    float ssbase;
     vec2 fog;
+    vec3 fogColor;
     vec4 resolution;
     vec4 sun;
     mat4 mvp;
@@ -19,7 +22,10 @@ layout(binding = 0) uniform Uni {
     mat4 m;
     mat4 v;
     mat4 p;
-    mat4 nm;
+    vec4 sc;
+    vec4 pbrBase;
+    mat4 shadowV;
+    vec2 shadowBias;
 } uni0;
 
 layout(binding = 3) uniform samplerCube envTex;

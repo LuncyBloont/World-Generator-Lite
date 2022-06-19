@@ -7,6 +7,7 @@
 #include "ui.h"
 #include "sw_terrainworker.h"
 #include "sw_renderworker.h"
+#include "sw_plantsworker.h"
 
 int main(int argc, char* argv[]) {
     QApplication a(argc, argv);
@@ -20,12 +21,14 @@ int main(int argc, char* argv[]) {
     QVulkanInstance* instance;
 
     instance = new QVulkanInstance();
-    instance->setLayers(QByteArrayList() << "VK_LAYER_LUNARG_standard_validation");
-    if (!instance->create()) { perror("Failed to create Vulkan instance.\n"); exit(-1); }
-    QLoggingCategory::setFilterRules(QStringLiteral("qt.vulkan=true"));
+    // instance->setLayers(QByteArrayList() << "VK_LAYER_LUNARG_standard_validation");
 
-    topView = new SceneView(nullptr, nullptr, instance, true);
-    sceneView = new SceneView(nullptr, nullptr, instance, false);
+    if (!instance->create()) { perror("Failed to create Vulkan instance.\n"); exit(-1); }
+
+    // QLoggingCategory::setFilterRules(QStringLiteral("*.vulkan=true"));
+
+    topView = new SceneView(&renderLock0, nullptr, nullptr, instance, true);
+    sceneView = new SceneView(&renderLock1, nullptr, nullptr, instance, false);
 
     MainWindow w(sceneView, topView);
     w.resize(1280, 720);
@@ -44,6 +47,9 @@ int main(int argc, char* argv[]) {
     SW_RenderWorker* renderWorker = new SW_RenderWorker(core);
     core->addWorker(renderWorker);
 
+    SW_PlantsWorker* plantsWorker = new SW_PlantsWorker(core);
+    core->addWorker(plantsWorker);
+
     /*
      * Then core start, workers will listening their DataViews.
      */
@@ -52,7 +58,7 @@ int main(int argc, char* argv[]) {
 
     int exitCode = a.exec();
 
-    delete terrianWorker;
+    // delete terrianWorker;
     delete core;
 
     return exitCode;

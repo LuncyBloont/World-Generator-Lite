@@ -12,7 +12,8 @@
 struct Vertex {
     glm::vec3 position;
     glm::vec3 normal;
-    glm::vec4 tangent;
+    glm::vec3 tangent;
+    glm::vec3 biotangent;
     glm::vec2 uv = glm::vec2(0.0f, 0.0f);
     glm::vec4 data0 = glm::vec4(0.0f);
     glm::vec4 data1 = glm::vec4(0.0f);
@@ -40,7 +41,7 @@ typedef std::vector<uint32_t> Indexs;       // 模型顶点索引
 
 class Model {
 public:
-    static constexpr uint32_t VERTEX_INPUT_COUNT = 6;           // 顶点数据项树
+    static constexpr uint32_t VERTEX_INPUT_COUNT = 7;           // 顶点数据项树
     static constexpr uint32_t INSTANCE_INPUT_COUNT = 5;         // 实例数据项数
 
     static void vertexInputAttributeDescription(VkVertexInputAttributeDescription* descriptions);
@@ -58,7 +59,7 @@ public:
     static void instanceInputBindingDescription(VkVertexInputBindingDescription& inputBinding);
     // 设置实例绑定配置（用于着色器）
 
-    static MMat packTransform(Transform t);
+    static MMat packTransform(Transform t, float normalScale);
 
 }; // 模型渲染配置静态辅助函数 helper functions
 

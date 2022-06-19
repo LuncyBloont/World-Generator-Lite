@@ -24,6 +24,8 @@ public:
     void addWidgetToList(QWidget* w);
     void pushLog(const std::string& s);
 
+    void changeEvent(QEvent* event) override;
+
 private slots:
 
     void viewToHillsButton_clicked();

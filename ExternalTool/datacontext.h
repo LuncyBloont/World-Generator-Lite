@@ -17,7 +17,7 @@ public:
     void markSaved();                                   // 标记所有DataView已经记录，即未修改
     void saveToBinary(BinaryPack* pack) const;          // 保存数据到二进制包
     void loadFromBinary(const BinaryPack* pack);        // 从二进制包读取数据
-    void insert(DataView* dataView);                    // 插入新的DataView
+    void insert(DataView* dataView, const std::string& host);                    // 插入新的DataView
     DataView* get(const std::string& name);             // 获取指定名称的DataView
     // void erease(const std::string& name);               // 删除某个DataView，已弃用，数据环境不能动态更改，属于程序启动时的固定配置
 

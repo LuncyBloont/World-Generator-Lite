@@ -19,6 +19,6 @@ void DataContext::markSaved() {
     }
 }
 
-void DataContext::insert(DataView* dataView) {
-    data.insert({ dataView->getName(), dataView });
+void DataContext::insert(DataView* dataView, const std::string& host) {
+    data.insert({ host + "@" + dataView->getName(), dataView });
 }

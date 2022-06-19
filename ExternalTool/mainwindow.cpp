@@ -1,14 +1,18 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-MainWindow::MainWindow(SceneView* mainView, SceneView* topView, QWidget *parent)
+extern std::mutex renderLock0;
+extern std::mutex renderLock1;
+extern std::mutex genLock;
+
+MainWindow::MainWindow(SceneView* mainView, SceneView*, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow) {
     ui->setupUi(this);
 
-    connect(ui->viewToHillsButton, &QPushButton::pressed, this, &MainWindow::viewToHillsButton_clicked);
-    connect(ui->viewToPlantButton, &QPushButton::pressed, this, &MainWindow::viewToPlantButton_clicked);
-    connect(ui->viewToWaterButton, &QPushButton::pressed, this, &MainWindow::viewToWaterButton_clicked);
+    // connect(ui->viewToHillsButton, &QPushButton::pressed, this, &MainWindow::viewToHillsButton_clicked);
+    // connect(ui->viewToPlantButton, &QPushButton::pressed, this, &MainWindow::viewToPlantButton_clicked);
+    // connect(ui->viewToWaterButton, &QPushButton::pressed, this, &MainWindow::viewToWaterButton_clicked);
 
     connect(this, &MainWindow::signal_pushMessage, this, &MainWindow::slot_pushMessage);
 
@@ -33,7 +37,6 @@ MainWindow::MainWindow(SceneView* mainView, SceneView* topView, QWidget *parent)
     splitter2->setHandleWidth(splitterWidth);
     splitter2->setStyleSheet(splitterStyle + "QSplitter { border: 0px solid green }");
 
-    splitter2->addWidget(ui->dataPart);
     splitter2->addWidget(ui->scenePart);
     QList<int> sizes2;
     sizes2 << 40000 << 40000;
@@ -45,10 +48,6 @@ MainWindow::MainWindow(SceneView* mainView, SceneView* topView, QWidget *parent)
     QWidget* cont0 = QWidget::createWindowContainer(mainView);
     ui->scenePart->layout()->replaceWidget(ui->sceneView, cont0);
     ui->sceneView->hide();
-
-    QWidget* cont1 = QWidget::createWindowContainer(topView);
-    ui->dataParent->layout()->replaceWidget(ui->dataView, cont1);
-    ui->dataView->hide();
 
     viewToHillsButton_clicked();
     viewToWaterButton_clicked();
@@ -68,12 +67,24 @@ void MainWindow::pushLog(const std::string& s) {
     emit signal_pushMessage();
 }
 
+void MainWindow::changeEvent(QEvent*) {
+    if (this->windowState() == QWindow::Minimized) {
+        renderLock0.lock();
+        renderLock1.lock();
+        genLock.lock();
+    } else {
+        genLock.unlock();
+        renderLock1.unlock();
+        renderLock0.unlock();
+    }
+}
+
 void MainWindow::viewToHillsButton_clicked() {
     if (topViewHills) {
-        ui->viewToHillsButton->setText("山脉开");
+        // ui->viewToHillsButton->setText("山脉开");
         topViewHills = false;
     } else {
-        ui->viewToHillsButton->setText("山脉关");
+       // ui->viewToHillsButton->setText("山脉关");
         topViewHills = true;
     }
 }
@@ -81,10 +92,10 @@ void MainWindow::viewToHillsButton_clicked() {
 
 void MainWindow::viewToWaterButton_clicked() {
     if (topViewWater) {
-        ui->viewToWaterButton->setText("水域开");
+        // ui->viewToWaterButton->setText("水域开");
         topViewWater = false;
     } else {
-        ui->viewToWaterButton->setText("水域关");
+        // ui->viewToWaterButton->setText("水域关");
         topViewWater = true;
     }
 }
@@ -92,10 +103,10 @@ void MainWindow::viewToWaterButton_clicked() {
 
 void MainWindow::viewToPlantButton_clicked() {
     if (topViewPlants) {
-        ui->viewToPlantButton->setText("植被开");
+        // ui->viewToPlantButton->setText("植被开");
         topViewPlants = false;
     } else {
-        ui->viewToPlantButton->setText("植被关");
+        // ui->viewToPlantButton->setText("植被关");
         topViewPlants = true;
     }
 }

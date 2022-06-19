@@ -22,10 +22,18 @@ private:
     DataView* walkerS;
     DataView* walkerM;
     DataView* walkerC;
+    DataView* walkerSS;
+    DataView* walkerRB;
+    DataView* walkerSB;
+    DataView* walkerMB;
+    DataView* walkerCB;
+    DataView* walkerSSB;
     DataView* walkerType;
     WGLCore* core;
 
     float wait = 0.0f;
+
+    GEN_MEMORY;
 };
 
 #endif // SW_RENDERWORKER_H

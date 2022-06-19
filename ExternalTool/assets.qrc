@@ -27,5 +27,52 @@
         <file>textures/env/test/px.png</file>
         <file>textures/env/test/py.png</file>
         <file>textures/env/test/pz.png</file>
+        <file>textures/vase.png</file>
+        <file>models/vase.obj</file>
+        <file>textures/gammatest.bmp</file>
+        <file>textures/gammatest.png</file>
+        <file>textures/gammatest2.png</file>
+        <file>textures/standardPBR.png</file>
+        <file>textures/normals.png</file>
+        <file>textures/standardNormal.bmp</file>
+        <file>models/cube-repeat-tex.obj</file>
+        <file>models/sea.obj</file>
+        <file>shaders/shadow.frag.spv</file>
+        <file>shaders/shadow.vert.spv</file>
+    </qresource>
+    <qresource prefix="/example">
+        <file>example/albedo.bmp</file>
+        <file>example/hill.obj</file>
+        <file>example/normal.png</file>
+        <file>example/pbr.png</file>
+    </qresource>
+    <qresource prefix="/r">
+        <file>plants/arbor.obj</file>
+        <file>plants/climber.obj</file>
+        <file>plants/flowers.obj</file>
+        <file>plants/grass.obj</file>
+        <file>plants/larbor.obj</file>
+        <file>plants/lshrubs.obj</file>
+        <file>plants/sea.obj</file>
+        <file>plants/shrubs.obj</file>
+        <file>plants/stone.obj</file>
+        <file>plants/arbor.png</file>
+        <file>plants/arborLeaf.png</file>
+        <file>plants/arborN.png</file>
+        <file>plants/climber.png</file>
+        <file>plants/climberN.png</file>
+        <file>plants/flowers.png</file>
+        <file>plants/flowersN.png</file>
+        <file>plants/grassN.png</file>
+        <file>plants/grassx.png</file>
+        <file>plants/larbor.png</file>
+        <file>plants/larborLeaf.png</file>
+        <file>plants/larborN.png</file>
+        <file>plants/lshrub.png</file>
+        <file>plants/lshrubN.png</file>
+        <file>plants/shrubN.png</file>
+        <file>plants/shrubs.png</file>
+        <file>plants/stone.png</file>
+        <file>plants/stoneN.png</file>
     </qresource>
 </RCC>

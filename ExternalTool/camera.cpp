@@ -57,3 +57,22 @@ void Camera::lerp(const Camera& other, float p) {
     front = glm::mix(front, other.front, p);
     front = glm::normalize(front);
 }
+
+glm::mat4 Camera::getShadowV(glm::vec3 sunDir, float size, int level, float back, float front) {
+    float scale = glm::pow(0.5f, level);
+    glm::mat4 t = { 1.0f, 0.0f, 0.0f, 0.0f,
+                    0.0f, 1.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 1.0f, 0.0f,
+                    -position.x, -position.y, -position.z, 1.0f };
+
+    glm::vec3 bz = glm::normalize(sunDir);
+    glm::vec3 br = glm::normalize(glm::cross(bz, glm::vec3(1.0f, 0.0f, 0.0f)));
+    glm::vec3 bu = glm::cross(br, bz);
+
+    glm::mat4 v = { br.x / size * scale, bu.x / size * scale, bz.x / (front - back) / size * scale, 0.0f,
+                    br.y / size * scale, bu.y / size * scale, bz.y / (front - back) / size * scale, 0.0f,
+                    br.z / size * scale, bu.z / size * scale, bz.z / (front - back) / size * scale, 0.0f,
+                    0.0f, 0.0f, -back / (front - back), 1.0f };
+
+    return v * t;
+}

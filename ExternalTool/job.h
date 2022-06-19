@@ -3,8 +3,8 @@
 #include <vector>
 #include <cstdint>
 #include <QImage>
-#include "wglcore.h"
 #include "model.h"
+#include <QImage>
 
 class Job {
 public:
@@ -14,17 +14,17 @@ public:
 public:
     // 导出成品相关数据，由Workers修改
 
-    std::vector<float> heightMap;
-    uint32_t mapSizeU;
-    uint32_t mapSizeV;
-    float mapWidth;
+    QImage heightMap;
+    QImage typeMap;
+    std::vector<float> hmap;
+    float mapSizeU;
+    float mapSizeV;
     float mapHeight;
     QImage normalMap;
 
     QImage mainTexture;
 
-    QImage typeMap0;
-    QImage typeMap1;
+    bool hillReady = false;
 
     std::vector<Transform> tallArborIns;        // 高大乔木实例
     std::vector<Transform> arborIns;            // 乔木实例

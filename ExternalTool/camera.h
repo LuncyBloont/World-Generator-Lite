@@ -21,6 +21,7 @@ public:
     glm::mat4 getV();
     glm::mat4 getP(glm::vec2 resoution);
     void lerp(const Camera& other, float p);
+    glm::mat4 getShadowV(glm::vec3 sunDir, float size, int level, float back, float front);
 };
 
 #endif // CAMERA_H

@@ -46,92 +46,6 @@
            <widget class="QWidget" name="viewsInner" native="true">
             <layout class="QVBoxLayout" name="verticalLayout_3">
              <item>
-              <widget class="QWidget" name="dataPart" native="true">
-               <property name="sizePolicy">
-                <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-                 <horstretch>0</horstretch>
-                 <verstretch>1</verstretch>
-                </sizepolicy>
-               </property>
-               <layout class="QVBoxLayout" name="verticalLayout_5">
-                <item>
-                 <layout class="QVBoxLayout" name="dataParent" stretch="0,0">
-                  <property name="sizeConstraint">
-                   <enum>QLayout::SetDefaultConstraint</enum>
-                  </property>
-                  <item>
-                   <layout class="QHBoxLayout" name="horizontalLayout">
-                    <property name="sizeConstraint">
-                     <enum>QLayout::SetMinimumSize</enum>
-                    </property>
-                    <item>
-                     <widget class="QPushButton" name="viewToHillsButton">
-                      <property name="text">
-                       <string>山脉</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item>
-                     <widget class="QPushButton" name="viewToWaterButton">
-                      <property name="text">
-                       <string>水源</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item>
-                     <widget class="QPushButton" name="viewToPlantButton">
-                      <property name="text">
-                       <string>植被</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item>
-                     <widget class="QPushButton" name="viewChange">
-                      <property name="text">
-                       <string>视角</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item>
-                     <spacer name="horizontalSpacer">
-                      <property name="orientation">
-                       <enum>Qt::Horizontal</enum>
-                      </property>
-                      <property name="sizeHint" stdset="0">
-                       <size>
-                        <width>40</width>
-                        <height>20</height>
-                       </size>
-                      </property>
-                     </spacer>
-                    </item>
-                   </layout>
-                  </item>
-                  <item>
-                   <widget class="QFrame" name="dataView">
-                    <property name="sizePolicy">
-                     <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-                      <horstretch>0</horstretch>
-                      <verstretch>0</verstretch>
-                     </sizepolicy>
-                    </property>
-                    <property name="cursor">
-                     <cursorShape>CrossCursor</cursorShape>
-                    </property>
-                    <property name="frameShape">
-                     <enum>QFrame::StyledPanel</enum>
-                    </property>
-                    <property name="frameShadow">
-                     <enum>QFrame::Raised</enum>
-                    </property>
-                   </widget>
-                  </item>
-                 </layout>
-                </item>
-               </layout>
-              </widget>
-             </item>
-             <item>
               <widget class="QWidget" name="scenePart" native="true">
                <property name="sizePolicy">
                 <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
@@ -275,7 +189,6 @@
     <property name="title">
      <string>文件</string>
     </property>
-    <addaction name="plantManagerButton"/>
     <addaction name="exitButton"/>
    </widget>
    <widget class="QMenu" name="menu_2">
@@ -288,11 +201,6 @@
    <addaction name="menu_2"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
-  <action name="plantManagerButton">
-   <property name="text">
-    <string>植被管理</string>
-   </property>
-  </action>
   <action name="about">
    <property name="text">
     <string>关于</string>

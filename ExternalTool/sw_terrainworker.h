@@ -23,14 +23,37 @@ public:
     const char* getName() const override;                // 返回名称
 
 private:
-    DataView* size;              // vec2
-    DataView* height;            // float
+
+    struct TerrainShader : public Core::Shader {
+        glm::vec2 scale;
+        glm::vec2 offset;
+        float detal;
+        float rough;
+        glm::vec4 mainImage(glm::vec2 uv, glm::vec2 resolution) override;
+    };
+
+    DataView* terrainSize;              // vec2
+    DataView* terrainHeight;            // float
     DataView* noiseType;         // enum
     DataView* resolutionX;       // Int
     DataView* resolutionY;       // Int
+    DataView* scale;
+    DataView* offset;
+    DataView* detal;
+    DataView* roughness;
+
     WGLCore* core;
 
-    float test = 0.0f;
+    QImage heightMap;
+    TerrainShader tshader;
+    Vertexs map;
+    Indexs indexs;
+
+    int pos = 0;
+
+    const int innerResolution = 4;
+
+    GEN_MEMORY;
 };
 
 #endif // SW_TERRAINWORKER_H

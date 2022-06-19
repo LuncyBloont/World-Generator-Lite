@@ -8,19 +8,19 @@ UI::UI(MainWindow* mainWin, SceneView* mainV, SceneView* top): mainWin(mainWin),
 }
 
 void UI::addDataItem(DataView* dataview) {
-    const auto makeNumberBox = [] () {
+    const auto makeNumberBox = [] (double min, double max) {
         QDoubleSpinBox* box = new QDoubleSpinBox();
-        box->setSingleStep(0.01);
+        box->setSingleStep((max - min) / 20.0);
         box->setDecimals(6);
-        box->setMaximum(1e9);
-        box->setMinimum(-1e9);
+        box->setMaximum(max);
+        box->setMinimum(min);
         return box;
     };
-    const auto makeIntBox = [] () {
+    const auto makeIntBox = [] (int min, int max) {
         QSpinBox* box = new QSpinBox();
-        box->setSingleStep(1);
-        box->setMaximum(INT32_MAX);
-        box->setMinimum(INT32_MIN);
+        box->setSingleStep(glm::max(1, (max - min) / 20));
+        box->setMaximum(max);
+        box->setMinimum(min);
         return box;
     };
 
@@ -30,8 +30,10 @@ void UI::addDataItem(DataView* dataview) {
 
     if (dataview->getType() == Type::Name::Vec2) {
         CATCHVAL(glm::vec2, dft, dataview->get());
-        QDoubleSpinBox* v0 = makeNumberBox();
-        QDoubleSpinBox* v1 = makeNumberBox();
+        CATCHVAL(glm::vec2, min, dataview->getMin());
+        CATCHVAL(glm::vec2, max, dataview->getMax());
+        QDoubleSpinBox* v0 = makeNumberBox(min.x, max.x);
+        QDoubleSpinBox* v1 = makeNumberBox(min.y, max.y);
         v0->setValue(dft.x);
         v1->setValue(dft.y);
         v0->connect(v0, &QDoubleSpinBox::textChanged, [v0, dataview] () {
@@ -49,9 +51,11 @@ void UI::addDataItem(DataView* dataview) {
     }
     if (dataview->getType() == Type::Name::Vec3) {
         CATCHVAL(glm::vec3, dft, dataview->get());
-        QDoubleSpinBox* v0 = makeNumberBox();
-        QDoubleSpinBox* v1 = makeNumberBox();
-        QDoubleSpinBox* v2 = makeNumberBox();
+        CATCHVAL(glm::vec3, min, dataview->getMin());
+        CATCHVAL(glm::vec3, max, dataview->getMax());
+        QDoubleSpinBox* v0 = makeNumberBox(min.x, max.x);
+        QDoubleSpinBox* v1 = makeNumberBox(min.y, max.y);
+        QDoubleSpinBox* v2 = makeNumberBox(min.z, max.z);
         v0->setValue(dft.x);
         v1->setValue(dft.y);
         v2->setValue(dft.y);
@@ -76,10 +80,12 @@ void UI::addDataItem(DataView* dataview) {
     }
     if (dataview->getType() == Type::Name::Vec4) {
         CATCHVAL(glm::vec4, dft, dataview->get());
-        QDoubleSpinBox* v0 = makeNumberBox();
-        QDoubleSpinBox* v1 = makeNumberBox();
-        QDoubleSpinBox* v2 = makeNumberBox();
-        QDoubleSpinBox* v3 = makeNumberBox();
+        CATCHVAL(glm::vec4, min, dataview->getMin());
+        CATCHVAL(glm::vec4, max, dataview->getMax());
+        QDoubleSpinBox* v0 = makeNumberBox(min.x, max.x);
+        QDoubleSpinBox* v1 = makeNumberBox(min.y, max.y);
+        QDoubleSpinBox* v2 = makeNumberBox(min.z, max.z);
+        QDoubleSpinBox* v3 = makeNumberBox(min.w, max.w);
         v0->setValue(dft.x);
         v1->setValue(dft.y);
         v2->setValue(dft.y);
@@ -111,7 +117,9 @@ void UI::addDataItem(DataView* dataview) {
     }
     if (dataview->getType() == Type::Name::Float) {
         CATCHVAL(float, dft, dataview->get());
-        QDoubleSpinBox* v =makeNumberBox();
+        CATCHVAL(float, min, dataview->getMin());
+        CATCHVAL(float, max, dataview->getMax());
+        QDoubleSpinBox* v = makeNumberBox(min, max);
         v->setValue(dft);
         v->connect(v, &QDoubleSpinBox::textChanged, [v, dataview] () {
             float val = v->value();
@@ -121,7 +129,9 @@ void UI::addDataItem(DataView* dataview) {
     }
     if (dataview->getType() == Type::Name::Double) {
         CATCHVAL(double, dft, dataview->get());
-        QDoubleSpinBox* v = makeNumberBox();
+        CATCHVAL(double, min, dataview->getMin());
+        CATCHVAL(double, max, dataview->getMax());
+        QDoubleSpinBox* v = makeNumberBox(min, max);
         v->setValue(dft);
         v->connect(v, &QDoubleSpinBox::textChanged, [v, dataview] () {
             double val = v->value();
@@ -131,7 +141,9 @@ void UI::addDataItem(DataView* dataview) {
     }
     if (dataview->getType() == Type::Name::Int) {
         CATCHVAL(int, dft, dataview->get());
-        QSpinBox* v = makeIntBox();
+        CATCHVAL(int, min, dataview->getMin());
+        CATCHVAL(int, max, dataview->getMax());
+        QSpinBox* v = makeIntBox(min, max);
         v->setValue(dft);
         v->connect(v, &QSpinBox::textChanged, [v, dataview] () {
             int val = v->value();
