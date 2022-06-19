@@ -21,7 +21,7 @@ World Generator Lit是一个基于PCG的过程化开源地形生成器，属于�
 
 #### 项目进度
 
-[项目进度](./tasks.md)
+![项目进度](./doc/task.png)
 
 #### 安装教程
 
