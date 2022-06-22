@@ -201,6 +201,10 @@ public:
 
 private:
 
+    const uint32_t UNI_FRAME_BD = 0;
+    const uint32_t UNI_OBJ_BD = 1;
+    const uint32_t UNI_SHADOW_BD = 2;
+
     Texture2D shadowMap[4];
     VkFramebuffer shadowFrameBuffer[4];
 
@@ -280,6 +284,35 @@ struct Uniform {
     alignas(16) glm::vec4 pbrBase;
     alignas(16) glm::mat4 shadowV;
     alignas(8) glm::vec2 shadowBias;
+};
+
+struct UniFrame {
+    alignas(4) float time;
+    alignas(4) float skyForce;
+    alignas(8) glm::vec2 fog;
+    alignas(16) glm::vec3 fogColor;
+    alignas(16) glm::vec4 resolution;
+    alignas(16) glm::vec4 sun;
+    alignas(16) glm::vec3 sunDir;
+    alignas(16) glm::mat4 shadowV;
+    alignas(8) glm::vec2 shadowBias;
+};
+
+struct UniObject {
+    alignas(4) float subsurface;
+    alignas(4) float ssbase;
+    alignas(16) glm::mat4 mvp;
+    alignas(16) glm::vec4 pbrRSMC;
+    alignas(16) glm::vec4 baseColor;
+    alignas(16) glm::mat4 m;
+    alignas(16) glm::mat4 v;
+    alignas(16) glm::mat4 p;
+    alignas(16) glm::vec4 scale;
+    alignas(16) glm::vec4 pbrBase;
+};
+
+struct UniShadow {
+    alignas(16) glm::mat4 shadowV;
 };
 
 class SceneView;
