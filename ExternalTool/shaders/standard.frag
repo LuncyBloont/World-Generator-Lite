@@ -16,48 +16,22 @@ layout(location = 10) in vec4 shadowPos;
 
 layout(location = 0) out vec4 outColor;
 
-layout(binding = 0) uniform Uni {
-    float time;
-    float skyForce;
-    float subsurface;
-    float ssbase;
-    vec2 fog;
-    vec3 fogColor;
-    vec4 resolution;
-    vec4 sun;
-    mat4 mvp;
-    vec4 bprRSMC;
-    vec3 sunDir;
-    vec4 baseColor;
-    vec4 etc;
-    mat4 m;
-    mat4 v;
-    mat4 p;
-    vec4 sc;
-    vec4 pbrBase;
-    mat4 shadowV;
-    vec2 shadowBias;
-} uni0;
-
-layout(binding = 1) uniform sampler2D albedo;
-layout(binding = 2) uniform sampler2D pbrTex;
-layout(binding = 3) uniform samplerCube envTex;
-layout(binding = 4) uniform sampler2D normalTex;
-layout(binding = 5) uniform sampler2D shadowMap0;
-
 void main() {
     vec3 position = fposition;
     vec3 rnormal = normalize(fnormal);// * sign(dot(fnormal, -position)); 
     vec3 tangent = normalize(ftangent);
     vec3 biotangent = normalize(fbiotangent);
 
-    vec3 sdPos = shadowPos.xyz / shadowPos.w;
-    sdPos.xy = sdPos.xy * 0.5 + 0.5;
-    float shadowRaw = texture(shadowMap0, sdPos.xy).r;
-    float sdfact = 1.0f;
-    if (shadowRaw <= sdPos.z) {
-        sdfact = mix(1.0, 0.0, clamp((sdPos.z - shadowRaw) / uni0.shadowBias.x, 0.0, 1.0));
+    float sdfact = 0.0;
+    float sdbase = 0.0;
+    for (float ddx = -frame.shadowBias.y; ddx <= frame.shadowBias.y; ddx += frame.shadowBias.y) {
+        for (float ddy = -frame.shadowBias.y; ddy <= frame.shadowBias.y; ddy += frame.shadowBias.y) {
+            float p = 1.0 + cos(length(vec2(ddx, ddy)) / frame.shadowBias.y / 1.414 * 3.14159);
+            sdfact += p * sampleShadow(shadowMap, shadowPos + vec4(ddx, ddy, 0.0, 0.0), frame.shadowBias);
+            sdbase += p;
+        }
     }
+    sdfact /= sdbase;
 
     vec2 uv = fuv;
 
@@ -66,17 +40,17 @@ void main() {
     vec3 normal = normalize(norData.x * tangent * normalScale + 
         norData.y * biotangent * normalScale + 
         norData.z * rnormal);
-    float ss = clamp(norData.w * uni0.subsurface + uni0.ssbase, 0.0, 1.0);
+    float ss = clamp(norData.w * object.subsurface + object.ssbase, 0.0, 1.0);
 
-    vec4 mainTex = texture(albedo, uv) * uni0.baseColor;
+    vec4 mainTex = texture(albedo, uv) * object.baseColor;
 
     vec3 surface = mainTex.rgb;
 
     vec4 pbrData = texture(pbrTex, uv);
-    float roughness = clamp(uni0.bprRSMC.x * pbrData.r + uni0.pbrBase.r, 0.0, 1.0);
-    float specular = clamp(uni0.bprRSMC.y * 2.0 * pbrData.g + uni0.pbrBase.g, 0.0, 2.0);
-    float metallic = clamp(uni0.bprRSMC.z * pbrData.b + uni0.pbrBase.b, 0.0, 1.0);
-    float contrast = clamp(uni0.bprRSMC.w * 2.0 * pbrData.a + uni0.pbrBase.a, 0.0, 2.0);
+    float roughness = clamp(object.pbrRSMC.x * pbrData.r + object.pbrBase.r, 0.0, 1.0);
+    float specular = clamp(object.pbrRSMC.y * 2.0 * pbrData.g + object.pbrBase.g, 0.0, 2.0);
+    float metallic = clamp(object.pbrRSMC.z * pbrData.b + object.pbrBase.b, 0.0, 1.0);
+    float contrast = clamp(object.pbrRSMC.w * 2.0 * pbrData.a + object.pbrBase.a, 0.0, 2.0);
     float fnlBase = 0.07;
     float fnlScale = 0.9;
 
@@ -92,24 +66,24 @@ void main() {
     float mirr = mix(1.0, fnl, 1.0 - metallic);
     vec3 insubface = mix(vec3(1.0), surface, metallic);
     float sl = dot(normalize(-sunDir - normalize(position)), normal);// dot(-sunDir, ref);
-    vec3 spe = sdfact * roughDark * mirr * uni0.sun.xyz * uni0.sun.w * insubface *
+    vec3 spe = sdfact * roughDark * mirr * frame.sun.xyz * frame.sun.w * insubface *
         pow(max(0.0, sl), pow(1.0 / fnlRough, 2.0)) / 
         pow(fnlRough + 0.1, 2.0) * mix(specular, 1.0, metallic) / 2.0;
     float bl = dot(-sunDir, normal) * ss + (1 - ss);
     vec3 diff = sdfact * mix(ss * 0.5 + 0.5, 1.0, ss) * max(0.0, bl) * surface * 
-        uni0.sun.xyz * uni0.sun.w * (1.0 - metallic);
+        frame.sun.xyz * frame.sun.w * (1.0 - metallic);
     vec3 miref = roughDark * mirr * 
-        cubeLod(envTex, (vec4(ref, 0.0) * uni0.v).xyz, fnlRough * maxDiffLevel) * 
+        cubeLod(envTex, (vec4(ref, 0.0) * frame.v).xyz, fnlRough * maxDiffLevel) * 
         insubface * mix(specular, 1.0, metallic);
     vec3 env = surface * 
-        cubeLod(envTex, (vec4(normal, 0.0) * uni0.v).xyz, maxDiffLevel) * 
+        cubeLod(envTex, (vec4(normal, 0.0) * frame.v).xyz, maxDiffLevel) * 
         (1.0 - metallic) * (1.0 - mirr * roughDark);
 
-    float fogP = clamp(log(length(position) * uni0.fog.x), 0.0, 1.0) * uni0.fog.y;
+    float fogP = clamp(log(length(position) * frame.fog.x), 0.0, 1.0) * frame.fog.y;
 
-    int type = int(uni0.etc.x);
+    int type = int(frame.etc.x);
     if (type == 0) {
-        outColor = vec4(pow(mix(diff + env + spe + miref, uni0.fogColor, fogP), vec3(1.0 / colorFix)) * brightFix, 1.0);
+        outColor = vec4(pow(mix(diff + env + spe + miref, frame.fogColor, fogP), vec3(1.0 / colorFix)) * brightFix, 1.0);
     } else if (type == 1) {
         outColor = vec4(vec3(fnl), 1.0);
     } else if (type == 2) {
@@ -121,7 +95,7 @@ void main() {
     } else if (type == 5) {
         outColor = vec4(miref, 1.0);
     } else if (type == 6) {
-        outColor = textureLod(envTex, mpos, (cos(uni0.time) * 0.5 + 0.5) * 20.0);
+        outColor = textureLod(envTex, mpos, (cos(frame.time) * 0.5 + 0.5) * 20.0);
     } else if (type == 7) {
         outColor = vec4(normal, 1.0);
     } else if (type == 8) {

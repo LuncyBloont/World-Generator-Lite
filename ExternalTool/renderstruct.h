@@ -9,6 +9,7 @@ struct Texture2D {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkMemoryRequirements requirement{};
     void* data;
+    VkImageView multiView[8] = { VK_NULL_HANDLE };
 };
 
 struct IBuffer {

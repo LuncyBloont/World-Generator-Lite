@@ -8,8 +8,8 @@ std::mutex renderLoopLock;
 
 SceneView::SceneView(std::mutex* lock, QVulkanWindow *parent, const DataContext* dataContext,
                      QVulkanInstance* instance, const bool topView)
-    : QVulkanWindow{parent}, dataContext(dataContext), instance(instance), topView(topView),
-      thread(this, 20), lock(lock) {
+    : QVulkanWindow{parent},
+      thread(this, 20), dataContext(dataContext), instance(instance), topView(topView), lock(lock) {
     setVulkanInstance(instance);
     setSampleCount(2);
     setCursor(Qt::CrossCursor);
@@ -50,10 +50,58 @@ void SceneView::wheelEvent(QWheelEvent* wheelEvent) {
 
 void SceneView::updateSLot() {
     renderLoopLock.lock();
+    lock->lock();
     render->camera.lerp(vcamera, 0.3f);
-    // vcamera.lookAt({ 0.0f, 0.0f, 8.0f });
-    // vcamera.move({ 0.4f, 0.0f, 0.0f });
-    // render->camera = vcamera;
+
+    for (int i = 0; i < concurrentFrameCount() && render->ready(); i++) {
+        auto funi = UNI(UniFrame, render->frameUniform.data, i, 1, render->uniformSize, 0);
+
+        funi->time = static_cast<float>(clock() / 1000.0f);
+
+        funi->resolution = glm::vec4(static_cast<float>(swapChainImageSize().width()),
+                                     static_cast<float>(swapChainImageSize().height()),
+                                     1.0f, 1.0f);
+
+        funi->etc.x = render->renderType;
+
+        funi->v = render->camera.getV();
+        funi->p = render->camera.getP(glm::vec2(static_cast<float>(swapChainImageSize().width()),
+                                       static_cast<float>(swapChainImageSize().height())));
+
+        funi->sun = glm::vec4(1.0f, 0.93f, 0.8f, 1.59f);
+        funi->sunDir = -glm::normalize(glm::vec3(1.0, 0.2, 1.0));
+
+        funi->fog = { 0.4f, 0.2f };
+        funi->fogColor = { 0.8f, 0.75f, 0.7f };
+
+        funi->shadowBias = glm::vec2(0.005f, 0.008f);
+
+        for (int j = 0; j < OBJECTS_MAX_COUNT; j++) {
+            auto objuni = UNI(UniObject, render->objectsUniform.data, i, OBJECTS_MAX_COUNT, render->uniformSize, j);
+            objuni->baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+            objuni->pbrBase = glm::vec4(render->testPBRBase.roughness, render->testPBRBase.specular,
+                                          render->testPBRBase.metallic, render->testPBRBase.contrast);
+            objuni->ssbase = render->testPBRBase.ss;
+            Transform t{};
+            t.position = (j != 5 + 1) ? glm::vec3{ 0.0f, 0.0f, 0.0f } :
+                                        glm::vec3{ glm::cos(funi->time), glm::sin(funi->time), 0.0f } * 0.01f;
+            t.rotation = { 0.0f, 0.0f, 0.0f };
+            t.scale = { 1.0f, 1.0f, 1.0f };
+            objuni->m = Model::packTransform(t, 1.0f).offsetRotate;
+            objuni->pbrRSMC = glm::vec4(render->testPBRInfo.roughness, render->testPBRInfo.specular,
+                                          render->testPBRInfo.metallic, render->testPBRInfo.contrast);
+            objuni->scale = Model::packTransform(t, 1.0f).scale;
+            objuni->subsurface = render->testPBRInfo.ss;
+            objuni->mvp = funi->p * funi->v * objuni->m;
+        }
+
+        for (int j = 0; j < 4; j++) {
+            auto suni = UNI(UniShadow, render->shadowUniform.data, i, 4, render->uniformSize, j);
+            suni->shadowV = render->camera.getShadowV(funi->sunDir, 4.0f, j, -4.0f, 4.0f);
+        }
+    }
+
+    lock->unlock();
     renderLoopLock.unlock();
 }
 
@@ -102,18 +150,20 @@ void Render::textureInit() {
 
     const VkFormat shadow_format = SHADOW_FORMAT;
     VkExtent2D shadowMapSize = { SHADOW_SIZE, SHADOW_SIZE };
-    for (int i = 0; i < 4; i++) {
-        createImage(shadowMapSize, 1, shadow_format, notuse, shadowMap[i].image,
-                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, shadowMap[i].memory,
-                    shadowMap[i].requirement, 0, 1, false);
-        createImageView(shadowMap[i].image, VK_IMAGE_ASPECT_DEPTH_BIT, shadow_format, 1,
-                        shadowMap[i].view, 0, 1);
-        // makeDepthBuffer(shadowMap[i].image);
 
+    createImage(shadowMapSize, 1, shadow_format, notuse, shadowMap.image,
+                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, shadowMap.memory,
+                shadowMap.requirement, 0, 4, false);
+    makeDepthBuffer(shadowMap.image);
+    createImageView(shadowMap.image, VK_IMAGE_ASPECT_DEPTH_BIT, shadow_format, 1,
+                    shadowMap.view, 0, 4, true);
+    for (int i = 0; i < 4; i++) {
+        createImageView(shadowMap.image, VK_IMAGE_ASPECT_DEPTH_BIT, shadow_format, 1,
+                        shadowMap.multiView[i], i, 1, true);
         VkFramebufferCreateInfo shadowFrameInfo{};
         shadowFrameInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         shadowFrameInfo.attachmentCount = 1;
-        shadowFrameInfo.pAttachments = &shadowMap[i].view;
+        shadowFrameInfo.pAttachments = &shadowMap.multiView[i];
         shadowFrameInfo.width = SHADOW_SIZE;
         shadowFrameInfo.height = SHADOW_SIZE;
         shadowFrameInfo.layers = 1;
@@ -143,7 +193,11 @@ void Render::vertexInit() {
 }
 
 void Render::uniformInit() {
-    loadUniform(uniform, uniformSize * window->concurrentFrameCount());
+    loadUniform(frameUniform, uniformSize(sizeof(frameUniform)) * window->concurrentFrameCount(), false);
+    loadUniform(objectsUniform, uniformSize(sizeof(objectsUniform)) * OBJECTS_MAX_COUNT *
+                window->concurrentFrameCount(), true);
+    loadUniform(shadowUniform, uniformSize(sizeof(shadowUniform)) * 4 * window->concurrentFrameCount(), true);
+
 }
 
 void Render::instanceInit() {
@@ -212,12 +266,6 @@ void Render::initResources() {
     uniformSet = new VkDescriptorSet[window->concurrentFrameCount()];
     // allocate uniform descriptor sets pointers.
 
-    const VkPhysicalDeviceLimits *pdevLimits = &window->physicalDeviceProperties()->limits;
-    const VkDeviceSize uniAlign = pdevLimits->minUniformBufferOffsetAlignment;
-    uniformSize = (sizeof(Uniform) / uniAlign + 1) * uniAlign;
-    printf("Allcate %u uniform description set.\n", window->concurrentFrameCount());
-    // get uniform create information.
-
     uniformInit();
 
     loadShader();
@@ -272,7 +320,9 @@ void Render::releaseResources() {
 
     // devFuncs->vkFreeMemory(dev, uniformMemory, VDFT);
     // devFuncs->vkDestroyBuffer(dev, uniform, VDFT);
-    destroyBuffer(uniform);
+    destroyBuffer(frameUniform);
+    destroyBuffer(objectsUniform);
+    destroyBuffer(shadowUniform);
 
     devFuncs->vkDestroyDescriptorSetLayout(dev, uniformSetLayout, VDFT);
     for (int i = 0; i < window->concurrentFrameCount(); i++) {
@@ -330,8 +380,6 @@ void Render::startNextFrame() {
     lock->lock();
     renderLoopLock.lock();
 
-    // camera.lerp(static_cast<SceneView*>(window)->vcamera, 0.3f);
-
     green += 0.005f;
     if (green > 1.0f)
         green = 0.0f;
@@ -355,46 +403,16 @@ void Render::startNextFrame() {
         U32(window->swapChainImageSize().height())
     };
 
-    Uniform unif{};
-    unif.time = static_cast<float>(clock() / 1000.0f);
+    VkDeviceSize offsets[] = { 0 };
 
-    unif.resolution = glm::vec4(static_cast<float>(scissor.extent.width),
-                                static_cast<float>(scissor.extent.height),
-                                1.0f, 1.0f);
-    unif.baseColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    unif.pbrRSMC = glm::vec4(testPBRInfo.roughness, testPBRInfo.specular, testPBRInfo.metallic, testPBRInfo.contrast);
-    unif.pbrBase = glm::vec4(testPBRBase.roughness, testPBRBase.specular, testPBRBase.metallic, testPBRBase.contrast);
-    unif.subsurface = testPBRInfo.ss;
-    unif.ssbase = testPBRBase.ss;
-    unif.etc.x = renderType;
-    unif.m = glm::mat4(1.0f, 0.0f, 0.0f, 0.0f,
-                       0.0f, 1.0f, 0.0f, 0.0f,
-                       0.0f, 0.0f, 1.0f, 0.0f,
-                       0.0f, 0.0f, 0.0f, 1.0f);
-    unif.v = camera.getV();
-    unif.p = camera.getP(glm::vec2(static_cast<float>(scissor.extent.width),
-                                   static_cast<float>(scissor.extent.height)));
-    unif.mvp = unif.p * unif.v * unif.m;
-    unif.sun = glm::vec4(1.0f, 0.93f, 0.8f, 1.59f);
-    unif.sunDir = -glm::normalize(glm::vec3(1.0, 0.2, 1.0));
-    unif.scale = glm::vec4(1.0);
-    unif.fog = { 0.4f, 0.2f };
-    unif.fogColor = { 0.8f, 0.75f, 0.7f };
+    uint32_t dynamicBinding[2] = { 0, 0 };
 
     albedoView = testAlbedo.view; PBRView = testPBR.view; normalView = testNormal.view;
     skyView = skyCubemap.view;
     updateUniforms(false, window->currentFrame());
 
-    VkDeviceSize offsets[] = { 0 };
-
-    uint32_t dynamicBinding = 0;
-
     // ########### shadow pass #########################
     for (int i = 0; i < 4; i++) {
-        unif.shadowBias = glm::vec2(0.005f, 0.05f);
-        unif.shadowV = camera.getShadowV(unif.sunDir, 3.0f, i, -3.0f, 3.0f);
-        fillLocalData(uniform, &unif, sizeof(Uniform), window->currentFrame() * uniformSize);
-
         VkRenderPassBeginInfo sdBeginInfo{};
         sdBeginInfo.renderArea.extent.width = SHADOW_SIZE;
         sdBeginInfo.renderArea.extent.height = SHADOW_SIZE;
@@ -423,23 +441,20 @@ void Render::startNextFrame() {
         devFuncs->vkCmdSetViewport(cmdBuf, 0, 1, &sdViewport);
         devFuncs->vkCmdSetScissor(cmdBuf, 0, 1, &sdDcissors);
 
+        dynamicBinding[1] = i * uniformSize(sizeof(UniShadow));
         devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout, 0, 1,
-                                          &uniformSet[window->currentFrame()], 1, &dynamicBinding);
+                                          &uniformSet[window->currentFrame()], 2, dynamicBinding);
 
         devFuncs->vkCmdBeginRenderPass(cmdBuf, &sdBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         devFuncs->vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
 
-        drawObjects(cmdBuf);
+        drawObjects(cmdBuf, dynamicBinding);
 
         devFuncs->vkCmdEndRenderPass(cmdBuf);
     }
 
     // ########### shadow pass #########################
-
-    unif.shadowBias = glm::vec2(0.005f, 0.05f);
-    unif.shadowV = camera.getShadowV(unif.sunDir, 3.0f, 1, -3.0f, 3.0f);
-    fillLocalData(uniform, &unif, sizeof(Uniform), window->currentFrame() * uniformSize);
 
     VkClearColorValue clearColor = {{ green, green, 0.0f, 1.0f }};
 
@@ -449,6 +464,8 @@ void Render::startNextFrame() {
     glm::vec3 env = glm::vec3(0.25f, 0.4f, 0.65f);
     env = glm::pow(env, glm::vec3(1.0f / 2.2f));
     clearValues[2].color = {{ env.r, env.g, env.b }};
+
+    dynamicBinding[1] = 0 * uniformSize(sizeof(UniShadow));
 
     VkRenderPassBeginInfo rpBeginInfo{};
     rpBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -467,10 +484,12 @@ void Render::startNextFrame() {
     devFuncs->vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     devFuncs->vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
+    albedoView = testAlbedo.view; PBRView = testPBR.view; normalView = testNormal.view;
+    skyView = skyCubemap.view;
     updateUniforms(false, window->currentFrame());
 
     devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, skyBoxPipelineLayout, 0, 1,
-                                      &uniformSet[window->currentFrame()], 1, &dynamicBinding);
+                                      &uniformSet[window->currentFrame()], 2, dynamicBinding);
 
     offsets[0] = 0;
     devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &skyVertex.buffer, offsets);
@@ -482,7 +501,7 @@ void Render::startNextFrame() {
     devFuncs->vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     devFuncs->vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
-    drawObjects(cmdBuf);
+    drawObjects(cmdBuf, dynamicBinding);
 
     devFuncs->vkCmdEndRenderPass(cmdBuf);
 
@@ -683,25 +702,27 @@ void Render::makeDepthBuffer(VkImage image) {
 
     devFuncs->vkBeginCommandBuffer(cmdBuf, &beginInfo);
 
-    VkImageMemoryBarrier makeImageDstBarrier{};
-    makeImageDstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    makeImageDstBarrier.image = image;
-    makeImageDstBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    makeImageDstBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    makeImageDstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    makeImageDstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    makeImageDstBarrier.srcAccessMask = VK_ACCESS_NONE;
-    makeImageDstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    makeImageDstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    makeImageDstBarrier.subresourceRange.baseArrayLayer = 0;
-    makeImageDstBarrier.subresourceRange.baseMipLevel = 0;
-    makeImageDstBarrier.subresourceRange.layerCount = 1;
-    makeImageDstBarrier.subresourceRange.levelCount = 1;
-    devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                   0,
-                                   0, nullptr,
-                                   0, nullptr,
-                                   1, &makeImageDstBarrier);
+    for (uint32_t i = 0; i < 4; i++) {
+        VkImageMemoryBarrier makeImageDstBarrier{};
+        makeImageDstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        makeImageDstBarrier.image = image;
+        makeImageDstBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        makeImageDstBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        makeImageDstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        makeImageDstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        makeImageDstBarrier.srcAccessMask = VK_ACCESS_NONE;
+        makeImageDstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        makeImageDstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        makeImageDstBarrier.subresourceRange.baseArrayLayer = i;
+        makeImageDstBarrier.subresourceRange.baseMipLevel = 0;
+        makeImageDstBarrier.subresourceRange.layerCount = 1;
+        makeImageDstBarrier.subresourceRange.levelCount = 1;
+        devFuncs->vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       0,
+                                       0, nullptr,
+                                       0, nullptr,
+                                       1, &makeImageDstBarrier);
+    }
 
     devFuncs->vkEndCommandBuffer(cmdBuf);
 
@@ -906,40 +927,10 @@ void Render::buildPipeline() {
     VkDescriptorSetLayoutCreateInfo setLayoutCreateInfo{};
     setLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 
-    VkDescriptorSetLayoutBinding uniBinding{};
-    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    uniBinding.binding = 0;
-    uniBinding.descriptorCount = 1;
-    uniBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding texBinding0{};  // 反射率贴图
-    texBinding0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    texBinding0.binding = 1;
-    texBinding0.descriptorCount = 1;
-    texBinding0.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding pbrBinding{};  // PBR纹理
-    pbrBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pbrBinding.binding = 2;
-    pbrBinding.descriptorCount = 1;
-    pbrBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
-    VkDescriptorSetLayoutBinding skyBinding{};
-    skyBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    skyBinding.binding = 3;
-    skyBinding.descriptorCount = 1;
-    skyBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
-    VkDescriptorSetLayoutBinding normalBinding{};
-    normalBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    normalBinding.binding = 4;
-    normalBinding.descriptorCount = 1;
-    normalBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
-    VkDescriptorSetLayoutBinding shadowBinding{};
-    shadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    shadowBinding.binding = 5;
-    shadowBinding.descriptorCount = 1;
-    shadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding bindings[UNI_BINDING_COUNT];
+    fillUnifromLayoutBindings(bindings);
 
-    VkDescriptorSetLayoutBinding bindings[] = { uniBinding, texBinding0, pbrBinding,
-                                                skyBinding, normalBinding, shadowBinding };
-    setLayoutCreateInfo.bindingCount = 6;
+    setLayoutCreateInfo.bindingCount = UNI_BINDING_COUNT;
     setLayoutCreateInfo.pBindings = bindings;
     VK(devFuncs->vkCreateDescriptorSetLayout(window->device(), &setLayoutCreateInfo, VDFT, &uniformSetLayout));
 
@@ -948,9 +939,15 @@ void Render::buildPipeline() {
 
     VkDescriptorPoolCreateInfo poolCreateInfo{};
 
-    VkDescriptorPoolSize uniPoolSize{};
-    uniPoolSize.descriptorCount = window->concurrentFrameCount();
-    uniPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    VkDescriptorPoolSize uniFramePoolSize{};
+    uniFramePoolSize.descriptorCount = window->concurrentFrameCount();
+    uniFramePoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    VkDescriptorPoolSize uniObjPoolSize{};
+    uniObjPoolSize.descriptorCount = window->concurrentFrameCount();
+    uniObjPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    VkDescriptorPoolSize uniShadowPoolSize{};
+    uniShadowPoolSize.descriptorCount = window->concurrentFrameCount();
+    uniShadowPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     VkDescriptorPoolSize texPoolSize0{};
     texPoolSize0.descriptorCount = window->concurrentFrameCount();
     texPoolSize0.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -963,9 +960,18 @@ void Render::buildPipeline() {
     VkDescriptorPoolSize normalPoolSize{};
     normalPoolSize.descriptorCount = window->concurrentFrameCount();
     normalPoolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    VkDescriptorPoolSize poolSizes[] = { uniPoolSize, texPoolSize0, pbrPoolSize, skyPoolSize, normalPoolSize };
+    VkDescriptorPoolSize shadowPoolSize{};
+    shadowPoolSize.descriptorCount = window->concurrentFrameCount();
+    shadowPoolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    VkDescriptorPoolSize dynamicPoolSize{};
+    dynamicPoolSize.descriptorCount = window->concurrentFrameCount();
+    dynamicPoolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
-    poolCreateInfo.poolSizeCount = 5;
+    VkDescriptorPoolSize poolSizes[] = { uniFramePoolSize, uniObjPoolSize, uniShadowPoolSize,
+                                         texPoolSize0, pbrPoolSize, skyPoolSize, normalPoolSize,
+                                         shadowPoolSize, dynamicPoolSize };
+
+    poolCreateInfo.poolSizeCount = 9;
     poolCreateInfo.pPoolSizes = poolSizes;
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.maxSets = window->concurrentFrameCount();
@@ -1073,7 +1079,10 @@ void Render::buildPipeline() {
     PBRView = testPBR.view;
     normalView = testNormal.view;
     skyView = skyCubemap.view;
-    updateUniforms(true, 0);
+
+    for (int i = 0; i < window->concurrentFrameCount(); i++) {
+        updateUniforms(true, i);
+    }
 }
 
 void Render::buildSkyPipeline() {
@@ -1083,29 +1092,10 @@ void Render::buildSkyPipeline() {
 
     VkDescriptorSetLayoutCreateInfo setLayoutInfo{};
     setLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    setLayoutInfo.bindingCount = 4;
-    VkDescriptorSetLayoutBinding uniBinding{};
-    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    uniBinding.binding = 0;
-    uniBinding.descriptorCount = 1;
-    uniBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding texBinding0{};  // 反射率贴图
-    texBinding0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    texBinding0.binding = 1;
-    texBinding0.descriptorCount = 1;
-    texBinding0.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding pbrBinding{};  // PBR纹理
-    pbrBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pbrBinding.binding = 2;
-    pbrBinding.descriptorCount = 1;
-    pbrBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
-    VkDescriptorSetLayoutBinding skyBinding{};
-    skyBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    skyBinding.binding = 3;
-    skyBinding.descriptorCount = 1;
-    skyBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    setLayoutInfo.bindingCount = UNI_BINDING_COUNT;
 
-    VkDescriptorSetLayoutBinding bindings[] = { uniBinding, texBinding0, pbrBinding, skyBinding };
+    VkDescriptorSetLayoutBinding bindings[UNI_BINDING_COUNT];
+    fillUnifromLayoutBindings(bindings);
 
     setLayoutInfo.pBindings = bindings;
     VkDescriptorSetLayout setLayout;
@@ -1216,29 +1206,10 @@ void Render::buildShadowPipeline() {
 
     VkDescriptorSetLayoutCreateInfo setLayoutInfo{};
     setLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    setLayoutInfo.bindingCount = 4;
-    VkDescriptorSetLayoutBinding uniBinding{};
-    uniBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    uniBinding.binding = 0;
-    uniBinding.descriptorCount = 1;
-    uniBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding texBinding0{};  // 反射率贴图
-    texBinding0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    texBinding0.binding = 1;
-    texBinding0.descriptorCount = 1;
-    texBinding0.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding pbrBinding{};  // PBR纹理
-    pbrBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pbrBinding.binding = 2;
-    pbrBinding.descriptorCount = 1;
-    pbrBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
-    VkDescriptorSetLayoutBinding skyBinding{};
-    skyBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    skyBinding.binding = 3;
-    skyBinding.descriptorCount = 1;
-    skyBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    setLayoutInfo.bindingCount = UNI_BINDING_COUNT;
 
-    VkDescriptorSetLayoutBinding bindings[] = { uniBinding, texBinding0, pbrBinding, skyBinding };
+    VkDescriptorSetLayoutBinding bindings[UNI_BINDING_COUNT];
+    fillUnifromLayoutBindings(bindings);
 
     setLayoutInfo.pBindings = bindings;
     VkDescriptorSetLayout setLayout;
@@ -1504,10 +1475,11 @@ void Render::createSampler() {
 }
 
 void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, uint32_t mipsLevel,
-                             VkImageView& view, uint32_t layer, uint32_t layerCount) {
+                             VkImageView& view, uint32_t layer, uint32_t layerCount, bool array) {
     VkImageViewCreateInfo viewInfo{};
     viewInfo.image = image;
     viewInfo.viewType = layerCount > 1 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
+    if (array) { viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY; }
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.format = format;
     viewInfo.subresourceRange.aspectMask = aspect;
@@ -1520,21 +1492,51 @@ void Render::createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat 
 
 void Render::updateUniforms(bool all, int id) {
     for (int i = 0; i < window->concurrentFrameCount(); i++) {
-        if (!all && id != i) { continue; }
-        VkWriteDescriptorSet uniformWrite{};
-        uniformWrite.descriptorCount = 1;
-        uniformWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        uniformWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        uniformWrite.dstArrayElement = 0;
-        uniformWrite.dstSet = uniformSet[i];
-        uniformWrite.dstBinding = 0;
-        VkDescriptorBufferInfo uniformBufferInfo{};
-        uniformBufferInfo.buffer = uniform.buffer;
-        uniformBufferInfo.offset = i * uniformSize;
-        uniformBufferInfo.range = uniformSize;
-        uniformWrite.pBufferInfo = &uniformBufferInfo;
+        if (id != i) { continue; }
+
+        VkWriteDescriptorSet frameUniformWrite{};
+        frameUniformWrite.descriptorCount = 1;
+        frameUniformWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        frameUniformWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameUniformWrite.dstArrayElement = 0;
+        frameUniformWrite.dstSet = uniformSet[i];
+        frameUniformWrite.dstBinding = UNI_FRAME_BD;
+        VkDescriptorBufferInfo frameUniformBufferInfo{};
+        frameUniformBufferInfo.buffer = frameUniform.buffer;
+        frameUniformBufferInfo.offset = i * uniformSize(sizeof(UniFrame));
+        frameUniformBufferInfo.range =  uniformSize(sizeof(UniFrame));
+        frameUniformWrite.pBufferInfo = &frameUniformBufferInfo;
+
+        VkWriteDescriptorSet objectsUniformWrite{};
+        objectsUniformWrite.descriptorCount = 1;
+        objectsUniformWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        objectsUniformWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        objectsUniformWrite.dstArrayElement = 0;
+        objectsUniformWrite.dstSet = uniformSet[i];
+        objectsUniformWrite.dstBinding = UNI_OBJ_BD;
+        VkDescriptorBufferInfo objectsUniformBufferInfo{};
+        objectsUniformBufferInfo.buffer = objectsUniform.buffer;
+        objectsUniformBufferInfo.offset = i * uniformSize(sizeof(UniObject)) * OBJECTS_MAX_COUNT;
+        objectsUniformBufferInfo.range =  uniformSize(sizeof(UniObject)) * OBJECTS_MAX_COUNT;
+        objectsUniformWrite.pBufferInfo = &objectsUniformBufferInfo;
+
+        VkWriteDescriptorSet shadowUniformWrite{};
+        shadowUniformWrite.descriptorCount = 1;
+        shadowUniformWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        shadowUniformWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        shadowUniformWrite.dstArrayElement = 0;
+        shadowUniformWrite.dstSet = uniformSet[i];
+        shadowUniformWrite.dstBinding = UNI_SHADOW_BD;
+        VkDescriptorBufferInfo shadowUniformBufferInfo{};
+        shadowUniformBufferInfo.buffer = shadowUniform.buffer;
+        shadowUniformBufferInfo.offset = i * uniformSize(sizeof(UniShadow)) * 4;
+        shadowUniformBufferInfo.range =  uniformSize(sizeof(UniShadow)) * 4;
+        shadowUniformWrite.pBufferInfo = &shadowUniformBufferInfo;
+
         if (all) {
-            devFuncs->vkUpdateDescriptorSets(window->device(), 1, &uniformWrite, 0, nullptr);
+            devFuncs->vkUpdateDescriptorSets(window->device(), 1, &frameUniformWrite, 0, nullptr);
+            devFuncs->vkUpdateDescriptorSets(window->device(), 1, &objectsUniformWrite, 0, nullptr);
+            devFuncs->vkUpdateDescriptorSets(window->device(), 1, &shadowUniformWrite, 0, nullptr);
         }
 
         VkWriteDescriptorSet textureWrite0{};
@@ -1543,7 +1545,7 @@ void Render::updateUniforms(bool all, int id) {
         textureWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         textureWrite0.dstArrayElement = 0;
         textureWrite0.dstSet = uniformSet[i];
-        textureWrite0.dstBinding = 1;
+        textureWrite0.dstBinding = UNI_MAX_BD;
         VkDescriptorImageInfo textureImage0Info{};
         textureImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         textureImage0Info.imageView = albedoView;
@@ -1557,7 +1559,7 @@ void Render::updateUniforms(bool all, int id) {
         pbrTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         pbrTexWrite0.dstArrayElement = 0;
         pbrTexWrite0.dstSet = uniformSet[i];
-        pbrTexWrite0.dstBinding = 2;
+        pbrTexWrite0.dstBinding = UNI_MAX_BD + 1;
         VkDescriptorImageInfo pbrTexImage0Info{};
         pbrTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         pbrTexImage0Info.imageView = PBRView;
@@ -1571,7 +1573,7 @@ void Render::updateUniforms(bool all, int id) {
         skyTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         skyTexWrite0.dstArrayElement = 0;
         skyTexWrite0.dstSet = uniformSet[i];
-        skyTexWrite0.dstBinding = 3;
+        skyTexWrite0.dstBinding = UNI_MAX_BD + 2;
         VkDescriptorImageInfo skyTexImage0Info{};
         skyTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         skyTexImage0Info.imageView = skyView;
@@ -1585,7 +1587,7 @@ void Render::updateUniforms(bool all, int id) {
         normalTexWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         normalTexWrite0.dstArrayElement = 0;
         normalTexWrite0.dstSet = uniformSet[i];
-        normalTexWrite0.dstBinding = 4;
+        normalTexWrite0.dstBinding = UNI_MAX_BD + 3;
         VkDescriptorImageInfo normalTexImage0Info{};
         normalTexImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         normalTexImage0Info.imageView = normalView;
@@ -1599,26 +1601,41 @@ void Render::updateUniforms(bool all, int id) {
         shadowWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         shadowWrite0.dstArrayElement = 0;
         shadowWrite0.dstSet = uniformSet[i];
-        shadowWrite0.dstBinding = 5;
+        shadowWrite0.dstBinding = UNI_MAX_BD + 4;
         VkDescriptorImageInfo shadowImage0Info{};
         shadowImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        shadowImage0Info.imageView = shadowMap[0].view;
+        shadowImage0Info.imageView = shadowMap.view;
         shadowImage0Info.sampler = shadowSampler;
         shadowWrite0.pImageInfo = &shadowImage0Info;
         devFuncs->vkUpdateDescriptorSets(window->device(), 1, &shadowWrite0, 0, nullptr);
+
+        VkWriteDescriptorSet vdynamicWrite0{};
+        vdynamicWrite0.descriptorCount = 1;
+        vdynamicWrite0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        vdynamicWrite0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        vdynamicWrite0.dstArrayElement = 0;
+        vdynamicWrite0.dstSet = uniformSet[i];
+        vdynamicWrite0.dstBinding = UNI_MAX_BD + 5;
+        VkDescriptorImageInfo vdynamicImage0Info{};
+        vdynamicImage0Info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vdynamicImage0Info.imageView = normalView;
+        vdynamicImage0Info.sampler = standSampler;
+        vdynamicWrite0.pImageInfo = &vdynamicImage0Info;
+        devFuncs->vkUpdateDescriptorSets(window->device(), 1, &vdynamicWrite0, 0, nullptr);
     }
 }
 
-void Render::drawObjects(VkCommandBuffer& cmdBuf) {
+void Render::drawObjects(VkCommandBuffer& cmdBuf, uint32_t* dynamicBinding) {
     VkDeviceSize offsets[] = { 0 };
     VkDeviceSize instanceOffsets[] = { 0 };
-    uint32_t dynamicBinding[] = { 0 };
+
     // ################### draw objects #####################################################
     albedoView = testAlbedo.view; PBRView = testPBR.view; normalView = testNormal.view;
-    // albedoView = shadowMap[0].view;
+    // albedoView = shadowMap.multiView[1];
     updateUniforms(false, window->currentFrame());
+    dynamicBinding[0] = 0 * uniformSize(sizeof(UniObject));
     devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, standardPipelineLayout, 0, 1,
-                                      &uniformSet[window->currentFrame()], 1, dynamicBinding);
+                                      &uniformSet[window->currentFrame()], 2, dynamicBinding);
 
     devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &terrainVertex.buffer, offsets);
     devFuncs->vkCmdBindIndexBuffer(cmdBuf, terrainIndex.buffer, 0, IndexType);
@@ -1629,8 +1646,9 @@ void Render::drawObjects(VkCommandBuffer& cmdBuf) {
     for (uint32_t i = 0; i < PLANT_TYPE_NUM; i++) {
         albedoView = plantsAlbedo[i].view; PBRView = plantsPBR[i].view; normalView = plantsNormal[i].view;
         updateUniforms(false, window->currentFrame());
+        dynamicBinding[0] = (1 + i) * uniformSize(sizeof(UniObject));
         devFuncs->vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, standardPipelineLayout, 0, 1,
-                                          &uniformSet[window->currentFrame()], 1, dynamicBinding);
+                                          &uniformSet[window->currentFrame()], 2, dynamicBinding);
 
         devFuncs->vkCmdBindVertexBuffers(cmdBuf, 0, 1, &plantsVertex[i].buffer, offsets);
         devFuncs->vkCmdBindIndexBuffer(cmdBuf, plantsIndex[i].buffer, 0, IndexType);
@@ -1638,6 +1656,69 @@ void Render::drawObjects(VkCommandBuffer& cmdBuf) {
         devFuncs->vkCmdBindVertexBuffers(cmdBuf, 1, 1, &plantsInstance[i].buffer, instanceOffsets);
         devFuncs->vkCmdDrawIndexed(cmdBuf, plantsIndex[i].count, plantsInstance[i].count, 0, 0, 0);
     }
+}
+
+uint32_t Render::uniformSize(uint32_t realSize) {
+    const VkPhysicalDeviceLimits *pdevLimits = &window->physicalDeviceProperties()->limits;
+    const VkDeviceSize uniAlign = pdevLimits->minUniformBufferOffsetAlignment;
+    uint32_t uniformSize = (realSize / uniAlign + 1) * uniAlign;
+    return uniformSize;
+}
+
+void Render::fillUnifromLayoutBindings(VkDescriptorSetLayoutBinding* bindings) {
+    VkDescriptorSetLayoutBinding uniFrameBinding{};
+    uniFrameBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uniFrameBinding.binding = UNI_FRAME_BD;
+    uniFrameBinding.descriptorCount = 1;
+    uniFrameBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding uniObjBinding{};
+    uniObjBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    uniObjBinding.binding = UNI_OBJ_BD;
+    uniObjBinding.descriptorCount = 1;
+    uniObjBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding uniShadowBinding{};
+    uniShadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    uniShadowBinding.binding = UNI_SHADOW_BD;
+    uniShadowBinding.descriptorCount = 1;
+    uniShadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutBinding texBinding0{};  // 反射率贴图
+    texBinding0.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    texBinding0.binding = UNI_MAX_BD;
+    texBinding0.descriptorCount = 1;
+    texBinding0.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding pbrBinding{};  // PBR纹理
+    pbrBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pbrBinding.binding = UNI_MAX_BD + 1;
+    pbrBinding.descriptorCount = 1;
+    pbrBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding skyBinding{};
+    skyBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    skyBinding.binding = UNI_MAX_BD + 2;
+    skyBinding.descriptorCount = 1;
+    skyBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding normalBinding{};
+    normalBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    normalBinding.binding = UNI_MAX_BD + 3;
+    normalBinding.descriptorCount = 1;
+    normalBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutBinding shadowBinding{};
+    shadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    shadowBinding.binding = UNI_MAX_BD + 4;
+    shadowBinding.descriptorCount = 1;
+    shadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutBinding vdynamicBinding{};
+    vdynamicBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    vdynamicBinding.binding = UNI_MAX_BD + 5;
+    vdynamicBinding.descriptorCount = 1;
+    vdynamicBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutBinding tbindings[] = { uniFrameBinding, uniObjBinding, uniShadowBinding,
+                                                texBinding0, pbrBinding,
+                                                skyBinding, normalBinding, shadowBinding, vdynamicBinding };
+    memcpy_s(bindings, sizeof(tbindings), tbindings, sizeof(tbindings));
 }
 
 void Render::genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint32_t layer) {
@@ -1747,7 +1828,7 @@ void Render::loadImage(Texture2D& texture, const char* path, bool srgb, VkExtent
     uint32_t miplevel = MIP(size.width, size.height);
     createImage(size, miplevel, format, notuse, texture.image, VK_IMAGE_USAGE_SAMPLED_BIT |
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT, texture.memory, texture.requirement, 0, 1, false, csize);
-    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 1);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 1, false);
     fillImage(file.sizeInBytes(), size, miplevel, file.bits(), texture, { 0, 0 }, 0, false);
     genMipmaps(texture.image, size, miplevel, 0);
 }
@@ -1773,7 +1854,7 @@ void Render::loadCubemap(Texture2D& texture, const char* path[6], bool srgb) {
     createImage(size, miplevel, format, notuse, texture.image, VK_IMAGE_USAGE_SAMPLED_BIT |
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT, texture.memory, texture.requirement,
                 VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6, false);
-    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 6);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 6, false);
     for (size_t i = 0; i < 6; i++) {
         fillImage(files[i].sizeInBytes(), size, miplevel, files[i].bits(), texture, { 0, 0 }, i, i != 0);
         genMipmaps(texture.image, size, miplevel, i);
@@ -1795,8 +1876,9 @@ void Render::loadInstance(IBuffer& buffer, uint32_t size) {
                  buffer.memory, buffer.requirement, true);
 }
 
-void Render::loadUniform(IBuffer& buffer, uint32_t size) {
-    createBuffer(size, buffer.data, buffer.buffer, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+void Render::loadUniform(IBuffer& buffer, uint32_t size, bool dynamic) {
+    createBuffer(size, buffer.data, buffer.buffer, dynamic ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC :
+                                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                  buffer.memory, buffer.requirement, true);
 }
 
@@ -1823,7 +1905,7 @@ void Render::destroyImage(Texture2D texture) {
     devFuncs->vkDestroyImage(window->device(), texture.image, VDFT);
 }
 
-void Render::updateImage(const QImage& img, Texture2D& texture, bool srgb) {
+void Render::updateImage(const QImage& img, Texture2D& texture, bool srgb, bool array) {
     devFuncs->vkDestroyImage(window->device(), texture.image, VDFT);
     devFuncs->vkDestroyImageView(window->device(), texture.view, VDFT);
     VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
@@ -1831,7 +1913,7 @@ void Render::updateImage(const QImage& img, Texture2D& texture, bool srgb) {
     uint32_t miplevel = MIP(size.width, size.height);
     createImageOnly(size, miplevel, format, texture, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                     0, 1, false);
-    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 1);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 1, array);
     fillImage(img.sizeInBytes(), size, miplevel, img.bits(), texture, { 0, 0 }, 0, false);
     genMipmaps(texture.image, size, miplevel, 0);
 }
@@ -1844,7 +1926,7 @@ void Render::updateCubeMap(const QImage* img, Texture2D& texture) {
     uint32_t miplevel = MIP(size.width, size.height);
     createImageOnly(size, miplevel, format, texture, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                     VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6, false);
-    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 6);
+    createImageView(texture.image, VK_IMAGE_ASPECT_COLOR_BIT, format, miplevel, texture.view, 0, 6, false);
     fillImage(img[0].sizeInBytes(), size, miplevel, img[0].bits(), texture, { 0, 0 }, 0, false);
     fillImage(img[1].sizeInBytes(), size, miplevel, img[1].bits(), texture, { 0, 0 }, 1, true);
     fillImage(img[2].sizeInBytes(), size, miplevel, img[2].bits(), texture, { 0, 0 }, 2, true);

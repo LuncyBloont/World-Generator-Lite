@@ -15,7 +15,7 @@ void SW_TerrainWorker::update() {
     float sizev = FOR_DATA(glm::vec2, terrainSize->get())->y;
     float sizeh = *FOR_DATA(float, terrainHeight->get());
 
-    for (int i = 0; i < 1024; i++) {
+    for (int i = 0; i < 256; i++) {
         if (pos >= width * height) { break; }
         int u = pos % width;
         int v = pos / width;
@@ -161,7 +161,7 @@ void SW_TerrainWorker::setup() {
     core->ui.mainView->render->fillBuffer(indexs.size() * IndexSize, indexs.data(), core->ui.mainView->render->terrainIndex, 0);
     core->ui.mainView->render->terrainIndex.count = indexs.size();
 
-    core->ui.mainView->render->updateImage(heightMap, core->ui.mainView->render->testAlbedo, SRGB);
+    core->ui.mainView->render->updateImage(heightMap, core->ui.mainView->render->testAlbedo, SRGB, false);
 
     job.heightMap = heightMap;
 
@@ -191,7 +191,7 @@ void SW_TerrainWorker::bind(size_t id) {
 
     heightMap = QImage(rx * innerResolution, ry * innerResolution, QImage::Format_RGBA8888);
 
-    glm::vec2 dftsize = glm::vec2(12.0f, 12.0f);
+    glm::vec2 dftsize = glm::vec2(6.0f, 6.0f);
     glm::vec2 dftsizemin = glm::vec2(-30.0f, -30.0f);
     glm::vec2 dftsizemax = glm::vec2(30.0f, 30.0f);
     terrainSize = new DataView("尺寸（x, y）", &dftsize, &dftsizemin, &dftsizemax, DataView::tVec2, core, id);

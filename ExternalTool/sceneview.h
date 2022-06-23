@@ -39,9 +39,13 @@
 #define MIP(w, h) (glm::floor(glm::log(glm::max(w, h)) / glm::log(2) + 0.5f))
 #define SRGB true
 #define LINEAR false
+#define UNI(type, data, offset, countInOne, sizefunc, id) (reinterpret_cast<type*>\
+    (reinterpret_cast<uint8_t*>(data) + (countInOne * offset + id) * sizefunc(sizeof(type))))
 
 #define SHADOW_SIZE 800
 #define SHADOW_FORMAT VK_FORMAT_D16_UNORM
+
+#define OBJECTS_MAX_COUNT 256
 
 extern bool resetup;
 
@@ -95,6 +99,8 @@ public:
 
     void startNextFrame() override;
 
+    uint32_t uniformSize(uint32_t realSize);
+
 public:
     // 面向WGL的接口
 
@@ -106,7 +112,8 @@ private:
     void createBuffer(uint32_t size, void*& data, VkBuffer& buffer, VkBufferUsageFlags usage,
                       VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, bool local);
 
-    void createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, void*& data, VkImage& image, VkImageUsageFlags usage,
+    void createImage(VkExtent2D extent, uint32_t mipsLevel, VkFormat format, void*& data, VkImage& image,
+                     VkImageUsageFlags usage,
                      VkDeviceMemory& memory, VkMemoryRequirements& memoryRequirement, VkImageCreateFlags flags,
                      uint32_t layerCount, bool local, VkExtent2D size = { 0, 0 });
 
@@ -125,12 +132,15 @@ private:
     void loadShader();
     void createBasicRenderPass();
     void createSampler();
-    void createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, uint32_t mipsLevel, VkImageView& view,
-                         uint32_t layer, uint32_t layerCount);
+    void createImageView(VkImage image, VkImageAspectFlags aspect, VkFormat format, uint32_t mipsLevel,
+                         VkImageView& view,
+                         uint32_t layer, uint32_t layerCount, bool array);
 
     void updateUniforms(bool all, int id);
 
-    void drawObjects(VkCommandBuffer& cmdBuf);
+    void drawObjects(VkCommandBuffer& cmdBuf, uint32_t* dynamicBinding);
+
+    void fillUnifromLayoutBindings(VkDescriptorSetLayoutBinding* bindings);
 
 public:
     VkImageView albedoView = VK_NULL_HANDLE;
@@ -143,17 +153,18 @@ public:
     void loadVertex(IBuffer& buffer, uint32_t size);
     void loadIndex(IBuffer& buffer, uint32_t size);
     void loadInstance(IBuffer& buffer, uint32_t size);
-    void loadUniform(IBuffer& buffer, uint32_t size);
+    void loadUniform(IBuffer& buffer, uint32_t size, bool dynamic);
     void fillLocalData(IBuffer& buffer, const void* data, uint32_t size, VkDeviceSize offset);
     void fillBuffer(uint32_t size, const void* data, IBuffer buffer, VkDeviceSize offset);
-    void fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, const void* data, Texture2D image, VkOffset2D offset,
+    void fillImage(uint32_t size, VkExtent2D extent, uint32_t mipsLevel, const void* data,
+                   Texture2D image, VkOffset2D offset,
                    uint32_t layer, bool protectOld);
     void genMipmaps(VkImage image, VkExtent2D size, uint32_t mipsLevel, uint32_t layer);
 
     void destroyBuffer(IBuffer buffer);
     void destroyImage(Texture2D texture);
 
-    void updateImage(const QImage& img, Texture2D& texture, bool srgb);
+    void updateImage(const QImage& img, Texture2D& texture, bool srgb, bool array);
     void updateCubeMap(const QImage* img, Texture2D& texture);
 
     bool ready() const;
@@ -184,7 +195,9 @@ public:
 
     IBuffer skyVertex;
 
-    IBuffer uniform;
+    IBuffer frameUniform;
+    IBuffer objectsUniform;
+    IBuffer shadowUniform;
 
     Texture2D terrainAlbedo;
     Texture2D terrainPBR;
@@ -201,11 +214,13 @@ public:
 
 private:
 
-    const uint32_t UNI_FRAME_BD = 0;
-    const uint32_t UNI_OBJ_BD = 1;
-    const uint32_t UNI_SHADOW_BD = 2;
+    constexpr static uint32_t UNI_FRAME_BD = 0;
+    constexpr static uint32_t UNI_OBJ_BD = 1;
+    constexpr static uint32_t UNI_SHADOW_BD = 2;
+    constexpr static uint32_t UNI_MAX_BD = 3;
+    constexpr static uint32_t UNI_BINDING_COUNT = 9;
 
-    Texture2D shadowMap[4];
+    Texture2D shadowMap;
     VkFramebuffer shadowFrameBuffer[4];
 
     VkPipeline standardPipeline = VK_NULL_HANDLE;
@@ -237,7 +252,6 @@ private:
     VkDescriptorSetLayout uniformSetLayout;
     VkDescriptorPool uniformPool;
     VkDescriptorSet* uniformSet = nullptr;
-    uint32_t uniformSize = 0;
 
     VkImage maxTexture;
     VkImage maxCubeTexture;
@@ -263,7 +277,7 @@ public:
 
 };
 
-struct Uniform {
+struct TheOldUniform {
     alignas(4) float time;
     alignas(4) float skyForce;
     alignas(4) float subsurface;
@@ -294,7 +308,9 @@ struct UniFrame {
     alignas(16) glm::vec4 resolution;
     alignas(16) glm::vec4 sun;
     alignas(16) glm::vec3 sunDir;
-    alignas(16) glm::mat4 shadowV;
+    alignas(16) glm::mat4 v;
+    alignas(16) glm::mat4 p;
+    alignas(16) glm::vec4 etc;
     alignas(8) glm::vec2 shadowBias;
 };
 
@@ -305,8 +321,6 @@ struct UniObject {
     alignas(16) glm::vec4 pbrRSMC;
     alignas(16) glm::vec4 baseColor;
     alignas(16) glm::mat4 m;
-    alignas(16) glm::mat4 v;
-    alignas(16) glm::mat4 p;
     alignas(16) glm::vec4 scale;
     alignas(16) glm::vec4 pbrBase;
 };
@@ -345,6 +359,7 @@ public:
 
     Render* render;
     Camera vcamera; // 虚拟相机，插值用
+    ViewThread thread;
 
 signals:
     void updateSignal();
@@ -356,7 +371,6 @@ private:
     const DataContext* dataContext;
     QVulkanInstance* instance;
     const bool topView;
-    ViewThread thread;
 
     std::mutex* lock;
 };

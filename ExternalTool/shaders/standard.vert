@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive: enable
+#include "./lib.glsl"
 
 layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec3 fnormal;
@@ -23,55 +25,35 @@ layout(location = 6) in vec4 data1;
 layout(location = 7) in mat4 offRot;
 layout(location = 11) in vec4 scale;
 
-layout(binding = 0) uniform Uni {
-    float time;
-    float skyForce;
-    float subsurface;
-    float ssbase;
-    vec2 fog;
-    vec3 fogColor;
-    vec4 resolution;
-    vec4 sun;
-    mat4 mvp;
-    vec4 bprRSMC;
-    vec3 sunDir;
-    vec4 baseColor;
-    vec4 etc;
-    mat4 m;
-    mat4 v;
-    mat4 p;
-    vec4 sc;
-    vec4 pbrBase;
-    mat4 shadowV;
-    vec2 shadowBias;
-} uni0;
-
 void main() {
 
-	vec4 ipos = offRot * vec4(position * scale.xyz * uni0.sc.xyz, 1.0);
+    fuv = vec2(uv.x, 1.0 - uv.y);
+    float dp = pow(1.0 - texture(dynamicMap, fuv).a, 0.5);
 
-	vec4 inor = offRot * vec4(normalize(normal / scale.xyz / uni0.sc.xyz), 0.0);
+	vec4 ipos = offRot * vec4((position + dp * worldWind(frame.time, normal, position)) * 
+                scale.xyz * object.scale.xyz, 1.0);
 
-	vec4 itan = offRot * vec4(normalize(tangent * scale.xyz * uni0.sc.xyz), 0.0);
+	vec4 inor = offRot * vec4(normalize(normal / scale.xyz / object.scale.xyz), 0.0);
 
-	vec4 ibtan = offRot * vec4(normalize(biotangent * scale.xyz * uni0.sc.xyz), 0.0);
+	vec4 itan = offRot * vec4(normalize(tangent * scale.xyz * object.scale.xyz), 0.0);
 
-    gl_Position = uni0.mvp * ipos;
+	vec4 ibtan = offRot * vec4(normalize(biotangent * scale.xyz * object.scale.xyz), 0.0);
+
+    gl_Position = object.mvp * ipos;
 
     fragColor = vec3(1.0, 0.0, 1.0);
 
-    mat4 mv = uni0.v * uni0.m;
+    mat4 mv = frame.v * object.m;
 
     fnormal = (mv * inor).xyz;
     fposition = (mv * ipos).xyz;
     ftangent = (mv * itan).xyz;
     fbiotangent = (mv * ibtan).xyz;
-    normalScale = scale.w * uni0.sc.w;
-    fuv = vec2(uv.x, 1.0 - uv.y);
+    normalScale = scale.w * object.scale.w;
     
     vpos = gl_Position.xy / gl_Position.w;
     mpos = position;
-    sunDir = (uni0.v * vec4(uni0.sunDir, 0.0)).xyz;
+    sunDir = (frame.v * vec4(frame.sunDir, 0.0)).xyz;
 
-    shadowPos = uni0.shadowV * uni0.m * ipos;
+    shadowPos = shadow.shadowV * object.m * ipos;
 }

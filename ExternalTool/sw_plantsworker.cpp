@@ -153,7 +153,7 @@ void SW_PlantsWorker::setup() {
 
     job.mainTexture.save("C:/tmp/main.png");
 
-    core->ui.mainView->render->updateImage(job.mainTexture, core->ui.mainView->render->testAlbedo, SRGB);
+    core->ui.mainView->render->updateImage(job.mainTexture, core->ui.mainView->render->testAlbedo, SRGB, false);
 }
 
 void SW_PlantsWorker::bind(size_t id) {

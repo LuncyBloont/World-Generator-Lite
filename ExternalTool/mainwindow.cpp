@@ -7,7 +7,7 @@ extern std::mutex genLock;
 
 MainWindow::MainWindow(SceneView* mainView, SceneView*, QWidget *parent)
     : QMainWindow(parent)
-    , ui(new Ui::MainWindow) {
+    , ui(new Ui::MainWindow), mainView(mainView) {
     ui->setupUi(this);
 
     // connect(ui->viewToHillsButton, &QPushButton::pressed, this, &MainWindow::viewToHillsButton_clicked);
@@ -77,6 +77,11 @@ void MainWindow::changeEvent(QEvent*) {
         renderLock1.unlock();
         renderLock0.unlock();
     }
+}
+
+void MainWindow::closeEvent(QCloseEvent*) {
+    mainView->thread.runable = false;
+    mainView->thread.exit(0);
 }
 
 void MainWindow::viewToHillsButton_clicked() {

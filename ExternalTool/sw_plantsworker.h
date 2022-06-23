@@ -22,7 +22,7 @@ private:
 
     float bias = 0.95f;
 
-    int times = 4;
+    int times = 3;
 
     int gent = 0;
     std::vector<Transform> plib[8];

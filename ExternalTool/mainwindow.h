@@ -25,6 +25,7 @@ public:
     void pushLog(const std::string& s);
 
     void changeEvent(QEvent* event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
 
@@ -42,6 +43,8 @@ private:
     bool topViewPlants = true;
 
     std::string msgbuf;
+
+    SceneView* mainView;
 
 signals:
     void signal_pushMessage();
