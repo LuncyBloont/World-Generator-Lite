@@ -39,6 +39,7 @@
         <file>models/sea.obj</file>
         <file>shaders/shadow.frag.spv</file>
         <file>shaders/shadow.vert.spv</file>
+        <file>shaders/gbuffer.frag.spv</file>
     </qresource>
     <qresource prefix="/example">
         <file>example/albedo.bmp</file>

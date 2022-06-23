@@ -11,7 +11,7 @@ SceneView::SceneView(std::mutex* lock, QVulkanWindow *parent, const DataContext*
     : QVulkanWindow{parent},
       thread(this, 20), dataContext(dataContext), instance(instance), topView(topView), lock(lock) {
     setVulkanInstance(instance);
-    setSampleCount(2);
+    setSampleCount(1);
     setCursor(Qt::CrossCursor);
     connect(this, &SceneView::updateSignal, this, &SceneView::updateSLot);
     setPreferredColorFormats({ VK_FORMAT_R8G8B8A8_UNORM });
@@ -74,7 +74,7 @@ void SceneView::updateSLot() {
         funi->fog = { 0.4f, 0.2f };
         funi->fogColor = { 0.8f, 0.75f, 0.7f };
 
-        funi->shadowBias = glm::vec2(0.005f, 0.008f);
+        funi->shadowBias = glm::vec2(0.005f, 1.0f / SHADOW_SIZE);
 
         for (int j = 0; j < OBJECTS_MAX_COUNT; j++) {
             auto objuni = UNI(UniObject, render->objectsUniform.data, i, OBJECTS_MAX_COUNT, render->uniformSize, j);
@@ -84,7 +84,7 @@ void SceneView::updateSLot() {
             objuni->ssbase = render->testPBRBase.ss;
             Transform t{};
             t.position = (j != 5 + 1) ? glm::vec3{ 0.0f, 0.0f, 0.0f } :
-                                        glm::vec3{ glm::cos(funi->time), glm::sin(funi->time), 0.0f } * 0.01f;
+                                        glm::vec3{ glm::cos(funi->time), glm::sin(funi->time), 0.0f } * 0.001f;
             t.rotation = { 0.0f, 0.0f, 0.0f };
             t.scale = { 1.0f, 1.0f, 1.0f };
             objuni->m = Model::packTransform(t, 1.0f).offsetRotate;
@@ -93,6 +93,7 @@ void SceneView::updateSLot() {
             objuni->scale = Model::packTransform(t, 1.0f).scale;
             objuni->subsurface = render->testPBRInfo.ss;
             objuni->mvp = funi->p * funi->v * objuni->m;
+            objuni->clip = 0.6;
         }
 
         for (int j = 0; j < 4; j++) {
@@ -990,8 +991,8 @@ void Render::buildPipeline() {
     colorInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     colorInfo.attachmentCount = 1;
     VkPipelineColorBlendAttachmentState colorBlendState{};
-    colorBlendState.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    colorBlendState.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorBlendState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorBlendState.colorBlendOp = VK_BLEND_OP_ADD;
     colorBlendState.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlendState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -1000,6 +1001,12 @@ void Render::buildPipeline() {
                                      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     colorBlendState.blendEnable = VK_FALSE;
     colorInfo.pAttachments = &colorBlendState;
+    colorInfo.blendConstants[0] = 0.0f;
+    colorInfo.blendConstants[1] = 0.0f;
+    colorInfo.blendConstants[2] = 0.0f;
+    colorInfo.blendConstants[3] = 0.0f;
+    colorInfo.logicOpEnable = VK_FALSE;
+    colorInfo.logicOp = VK_LOGIC_OP_COPY;
 
     VkGraphicsPipelineCreateInfo graphicsPipelineCreateInfo{};
     graphicsPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;

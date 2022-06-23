@@ -42,7 +42,7 @@
 #define UNI(type, data, offset, countInOne, sizefunc, id) (reinterpret_cast<type*>\
     (reinterpret_cast<uint8_t*>(data) + (countInOne * offset + id) * sizefunc(sizeof(type))))
 
-#define SHADOW_SIZE 800
+#define SHADOW_SIZE 1024
 #define SHADOW_FORMAT VK_FORMAT_D16_UNORM
 
 #define OBJECTS_MAX_COUNT 256
@@ -317,6 +317,7 @@ struct UniFrame {
 struct UniObject {
     alignas(4) float subsurface;
     alignas(4) float ssbase;
+    alignas(4) float clip;
     alignas(16) glm::mat4 mvp;
     alignas(16) glm::vec4 pbrRSMC;
     alignas(16) glm::vec4 baseColor;

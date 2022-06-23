@@ -61,9 +61,9 @@ void SW_PlantsWorker::update() {
                                                                 ry * job.mainTexture.height() + glm::sin(r) * l);
                         job.mainTexture.setPixelColor(rx * job.mainTexture.width() + glm::cos(r) * l,
                                                       ry * job.mainTexture.height() + glm::sin(r) * l,
-                                                      QColor((97 + 15 * glm::linearRand(-1.0f, 1.0f)) * 0.4 + old.red() * 0.6,
-                                                             (124 + 15 * glm::linearRand(-1.0f, 1.0f)) * 0.4 + old.green() * 0.6,
-                                                             (65 + 15 * glm::linearRand(-1.0f, 1.0f)) * 0.4 + old.blue() * 0.6, 255));
+                                                      QColor((54 + 15 * glm::linearRand(-1.0f, 1.0f)) * 0.4 + old.red() * 0.6,
+                                                             (88 + 15 * glm::linearRand(-1.0f, 1.0f)) * 0.4 + old.green() * 0.6,
+                                                             (48 + 15 * glm::linearRand(-1.0f, 1.0f)) * 0.4 + old.blue() * 0.6, 255));
                     }
                 }
             }
@@ -88,7 +88,7 @@ void SW_PlantsWorker::update() {
 void SW_PlantsWorker::reset() {
     job.typeMap = QImage(job.heightMap.width() / 4, job.heightMap.height() / 4, QImage::Format_RGBA8888);
     job.mainTexture = QImage(job.heightMap.width(), job.heightMap.height(), QImage::Format_RGBA8888);
-    job.mainTexture.fill(QColor(112, 107, 78, 255));
+    job.mainTexture.fill(QColor(70, 115, 63, 255));
     job.typeMap.fill(QColor(46, 0, 0, 255));
 
     for (int i = 0; i < 8; i++) {
@@ -163,10 +163,10 @@ void SW_PlantsWorker::bind(size_t id) {
     int lsc = 6;
     int sc = 7;
     int fc = 256;
-    int gc = 512;
+    int gc = 1024;
     int cc = 512;
     int stc = 64;
-    int cmin = 0, cmax = 1024;
+    int cmin = 0, cmax = 2048;
     larborC = new DataView("高大乔木种子", &lac, &cmin, &cmax, DataView::tInt, core, id);
     core->add(larborC, this);
     arborC = new DataView("乔木种子", &ac, &cmin, &cmax, DataView::tInt, core, id);

@@ -6,7 +6,7 @@ layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec3 fnormal;
 layout(location = 2) in vec3 fposition;
 layout(location = 3) in vec2 fuv;
-layout(location = 4) in vec2 vpos;
+layout(location = 4) in vec3 vpos;
 layout(location = 5) in vec3 mpos;
 layout(location = 6) in vec3 sunDir;
 layout(location = 7) in vec3 ftangent;
@@ -24,10 +24,11 @@ void main() {
 
     float sdfact = 0.0;
     float sdbase = 0.0;
-    for (float ddx = -frame.shadowBias.y; ddx <= frame.shadowBias.y; ddx += frame.shadowBias.y) {
-        for (float ddy = -frame.shadowBias.y; ddy <= frame.shadowBias.y; ddy += frame.shadowBias.y) {
+    float sdampler = 2.0;
+    for (float ddx = -frame.shadowBias.y * sdampler; ddx <= frame.shadowBias.y * sdampler; ddx += frame.shadowBias.y) {
+        for (float ddy = -frame.shadowBias.y * sdampler; ddy <= frame.shadowBias.y * sdampler; ddy += frame.shadowBias.y) {
             float p = 1.0 + cos(length(vec2(ddx, ddy)) / frame.shadowBias.y / 1.414 * 3.14159);
-            sdfact += p * sampleShadow(shadowMap, shadowPos + vec4(ddx, ddy, 0.0, 0.0), frame.shadowBias);
+            sdfact += p * sampleShadow(shadowMap, shadowPos, frame.shadowBias,  + vec2(ddx, ddy));
             sdbase += p;
         }
     }
@@ -54,7 +55,8 @@ void main() {
     float fnlBase = 0.07;
     float fnlScale = 0.9;
 
-    if (0.5 > mainTex.a) { discard; }
+    if (object.clip > mainTex.a) { discard; }
+    if (object.clip == 0.0 && hash2(vpos.xy / vpos.z) > mainTex.a) { discard; }
 
     surface = pow(surface, vec3(contrast));
     

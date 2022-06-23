@@ -2,16 +2,8 @@
 #extension GL_GOOGLE_include_directive: enable
 #include "./lib.glsl"
 
-layout(location = 0) out vec3 fragColor;
-layout(location = 1) out vec3 fnormal;
-layout(location = 2) out vec3 fposition;
 layout(location = 3) out vec2 fuv;
-layout(location = 4) out vec2 vpos;
-layout(location = 5) out vec3 mpos;
-layout(location = 6) out vec3 sunDir;
-layout(location = 7) out vec3 ftangent;
-layout(location = 8) out vec3 fbiotangent;
-layout(location = 9) out float normalScale;
+layout(location = 4) out vec3 vpos;
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
@@ -39,18 +31,5 @@ void main() {
     vec4 ibtan = offRot * vec4(normalize(biotangent * scale.xyz * object.scale.xyz), 0.0);
 
     gl_Position = shadow.shadowV * object.m * ipos;
-
-    fragColor = vec3(1.0, 0.0, 1.0);
-
-    mat4 mv = shadow.shadowV * object.m;
-
-    fnormal = (mv * inor).xyz;
-    fposition = (mv * ipos).xyz;
-    ftangent = (mv * itan).xyz;
-    fbiotangent = (mv * ibtan).xyz;
-    normalScale = scale.w * object.scale.w;
-    
-    vpos = gl_Position.xy / gl_Position.w;
-    mpos = position;
-    sunDir = (shadow.shadowV * vec4(frame.sunDir, 0.0)).xyz;
+    vpos = gl_Position.xyw;
 }

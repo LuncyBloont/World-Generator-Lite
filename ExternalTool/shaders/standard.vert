@@ -6,7 +6,7 @@ layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec3 fnormal;
 layout(location = 2) out vec3 fposition;
 layout(location = 3) out vec2 fuv;
-layout(location = 4) out vec2 vpos;
+layout(location = 4) out vec3 vpos;
 layout(location = 5) out vec3 mpos;
 layout(location = 6) out vec3 sunDir;
 layout(location = 7) out vec3 ftangent;
@@ -51,7 +51,7 @@ void main() {
     fbiotangent = (mv * ibtan).xyz;
     normalScale = scale.w * object.scale.w;
     
-    vpos = gl_Position.xy / gl_Position.w;
+    vpos = gl_Position.xyw;
     mpos = position;
     sunDir = (frame.v * vec4(frame.sunDir, 0.0)).xyz;
 
